@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPalette
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from cleanfolder.ui import MainWindow
@@ -119,6 +120,53 @@ class WindowTests(unittest.TestCase):
             warning.assert_called_once()
         self.assertTrue(self.window.choose_button.isEnabled())
         self.assertFalse(self.window.organize_button.isEnabled())
+
+    def test_empty_folder_state_updates_after_files_are_added_and_organized(self):
+        (self.root / "existing").mkdir()
+        self.load_folder()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.empty_preview)
+        self.assertEqual(self.window.file_stat.value.text(), "0개")
+        self.assertEqual(self.window.protected_stat.value.text(), "1개")
+        self.assertFalse(self.window.empty_preview.action.isVisible())
+        (self.root / "report.pdf").write_text("report")
+        self.window.refresh()
+        self.wait_until_idle()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.preview_table)
+        self.assertEqual(self.window.file_stat.value.text(), "1개")
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.empty_preview)
+        self.assertTrue(self.window.undo_button.isEnabled())
+        self.assertEqual(self.window.file_stat.value.text(), "0개")
+
+    def test_sidebar_navigation_keeps_folder_and_limits_default_action(self):
+        (self.root / "setup.dmg").write_text("installer")
+        self.load_folder()
+        self.window.nav_buttons[1].click()
+        self.assertEqual(self.window.tabs.currentIndex(), 1)
+        self.assertEqual(self.window.page_title.text(), "설치 파일")
+        self.assertFalse(self.window.organize_button.isVisible())
+        self.assertFalse(self.window.organize_button.isDefault())
+        self.assertEqual(self.window.folder, self.root)
+        self.window.nav_buttons[2].click()
+        self.assertIs(self.window.history_stack.currentWidget(), self.window.empty_history)
+        self.window.nav_buttons[0].click()
+        self.assertTrue(self.window.organize_button.isVisible())
+        self.assertTrue(self.window.organize_button.isDefault())
+        self.assertEqual(self.window.preview_table.rowCount(), 1)
+
+    def test_palette_changes_update_both_light_and_dark_themes(self):
+        original = QPalette(self.application.palette())
+        try:
+            for color, expected in (("#17191F", True), ("#F5F7FB", False), ("#17191F", True)):
+                palette = QPalette(original)
+                palette.setColor(QPalette.ColorRole.Window, QColor(color))
+                self.application.setPalette(palette)
+                self.application.processEvents()
+                self.assertEqual(self.window._theme_dark, expected)
+        finally:
+            self.application.setPalette(original)
+            self.application.processEvents()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,9 @@ SYMBOLS = {
     "undo": '<path d="m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14" transform="translate(0 -2)"/>',
     "organize": '<path d="M4 5h16M4 11h9M4 17h6M15 16l3 3 4-6"/>',
     "trash": '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+    "document": '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    "shield": '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/>',
+    "check": '<path d="m5 12 4 4L19 6"/><path d="M21 12a9 9 0 1 1-9-9"/>',
 }
 
 

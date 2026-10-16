@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="440" viewBox="0 0 680 440">
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="680" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FAFF"/>
+      <stop offset="1" stop-color="#EDF2FA"/>
+    </linearGradient>
+  </defs>
+  <rect width="680" height="440" fill="url(#canvas)"/>
+  <text x="340" y="63" fill="#202B40" font-family="Helvetica, Arial, sans-serif" font-size="25" font-weight="700" text-anchor="middle">CleanFolder 설치</text>
+  <text x="340" y="93" fill="#6C7890" font-family="Helvetica, Arial, sans-serif" font-size="13" text-anchor="middle">앱을 오른쪽 Applications 폴더로 드래그하세요.</text>
+  <path d="M64 119H616" stroke="#DEE6F2"/>
+  <rect x="105" y="149" width="170" height="179" rx="22" fill="#FFFFFF" stroke="#DEE6F2"/>
+  <rect x="405" y="149" width="170" height="179" rx="22" fill="#FFFFFF" stroke="#DEE6F2"/>
+  <circle cx="340" cy="220" r="31" fill="#E1EBFF"/>
+  <path d="M323 220H357M347 210L357 220L347 230" fill="none" stroke="#3478F6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="340" y="371" fill="#596780" font-family="Helvetica, Arial, sans-serif" font-size="12" text-anchor="middle">복사한 뒤, 응용 프로그램에서 CleanFolder를 실행하세요.</text>
+  <text x="340" y="394" fill="#8C96A9" font-family="Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle">기존 앱이 실행 중이라면 먼저 종료해 주세요.</text>
+</svg>

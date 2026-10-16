@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cleanfolder-desktop"
-version = "1.0.0"
+version = "1.1.1"
 description = "A safe, preview-first folder organizer for macOS"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]

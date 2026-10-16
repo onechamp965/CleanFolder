@@ -10,6 +10,7 @@
 - 앱 재실행 후에도 유지되는 작업 기록과 **원래대로 돌리기**
 - 복구 시 앱이 만든 빈 분류 폴더 제거
 - 전용 앱 아이콘 및 밝은 화면·어두운 화면에 맞춰 표시되는 버튼·탭 아이콘
+- 사이드바 탐색, 파일 수·용량 요약, 정리할 파일이 없을 때의 상태 안내
 
 ## 분류 기준
 
@@ -44,6 +45,20 @@
 
 ## 설치 및 실행
 
+### 배포 앱 사용
+
+GitHub Releases에 첨부된 Mac에 맞는 `.dmg` 또는 앱 전용 `.zip`을 다운로드합니다. `Code → Download ZIP`은 개발용 소스입니다.
+
+- **AppleSilicon**: M1·M2·M3·M4 등 Apple Silicon Mac
+- **Intel**: Intel Mac에서 별도로 빌드한 배포 파일
+- DMG를 열어 `CleanFolder.app`을 `Applications`로 끌어 놓고 실행합니다.
+- 설치 화면에서는 앱이 왼쪽, `Applications`가 오른쪽에 표시되며 화살표를 따라 드래그하면 됩니다.
+- 앱 전용 ZIP은 압축을 푼 뒤 `CleanFolder.app`을 응용 프로그램 폴더로 옮깁니다.
+- 배포 앱에는 Python과 필요한 라이브러리가 포함됩니다.
+- Apple 개발자 인증서 서명·공증을 거치지 않은 빌드는 macOS에서 실행이 차단될 수 있습니다.
+
+### 소스로 실행
+
 Python 3.10 이상과 macOS 데스크톱 환경이 필요합니다.
 
 ```bash
@@ -65,6 +80,17 @@ python -m cleanfolder --preview ~/Downloads
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+### macOS 앱 빌드
+
+빌드할 Mac에서 다음 명령을 실행합니다. 해당 Mac의 CPU 아키텍처용 앱을 생성합니다.
+
+```bash
+python -m pip install -r requirements-build.txt
+python scripts/build_macos.py
+```
+
+`dist/`에 아이콘이 적용된 `CleanFolder.app`, 배포용 ZIP, 설치용 DMG가 생성됩니다. 배포 파일은 GitHub의 **Releases → Draft a new release → Attach binaries**에 첨부합니다. 일반 사용자가 바로 찾을 수 있도록 Releases를 안내합니다.
 
 ## 사용 방법
 
