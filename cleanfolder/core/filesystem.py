@@ -37,6 +37,10 @@ def name_key(name: str) -> str:
 def available_name(parent: Path, name: str, reserved: set[str] | None = None) -> str:
     occupied = {name_key(entry.name) for entry in parent.iterdir()}
     occupied.update(reserved or ())
+    return suggest_name(name, occupied)
+
+
+def suggest_name(name: str, occupied: set[str]) -> str:
     candidate = name
     suffix = Path(name).suffix
     stem = name[:-len(suffix)] if suffix else name

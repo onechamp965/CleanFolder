@@ -35,7 +35,7 @@ def category_color(category: str, dark: bool) -> QColor:
 
 
 def stylesheet(palette: dict[str, str]) -> str:
-    palette = dict(palette, checkmark=(Path(__file__).with_name("assets") / "checkmark.svg").as_posix())
+    palette = dict(palette, checkmark=(Path(__file__).resolve().parents[1] / "assets" / "checkmark.svg").as_posix())
     return """
         QMainWindow { background: %(canvas)s; color: %(text)s; }
         QWidget#canvas { background: %(canvas)s; }
@@ -74,6 +74,15 @@ def stylesheet(palette: dict[str, str]) -> str:
         QPushButton#danger { color: #CE6A70; }
         QPushButton#danger:disabled { color: %(muted)s; }
         QTabWidget::pane { border: none; background: transparent; }
+        QWidget#settingsContent, QScrollArea#settingsScroll { background: %(canvas)s; border: none; }
+        QTabBar::tab { background: transparent; color: %(secondary)s; padding: 10px 17px; border-bottom: 2px solid transparent; }
+        QTabBar::tab:selected { color: %(accent)s; border-bottom-color: %(primary)s; }
+        QLineEdit, QPlainTextEdit, QComboBox { background: %(raised)s; color: %(text)s; border: 1px solid %(border)s; border-radius: 7px; padding: 8px; selection-background-color: %(selection)s; }
+        QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus { border-color: %(primary)s; }
+        QLineEdit:disabled, QComboBox:disabled { color: %(muted)s; }
+        QComboBox { padding-right: 28px; }
+        QComboBox::drop-down { border: none; width: 26px; }
+        QComboBox QAbstractItemView { background: %(surface)s; color: %(text)s; selection-background-color: %(selection)s; selection-color: %(text)s; }
         QTableWidget { border: none; background: %(surface)s; alternate-background-color: %(row)s; color: %(text)s; selection-background-color: %(selection)s; selection-color: %(text)s; outline: none; }
         QTableWidget::item { padding: 9px 12px; border: none; border-bottom: 1px solid %(border)s; }
         QTableWidget::item:selected { background: %(selection)s; }

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .filesystem import SafetyError
+from ..platforms.environment import data_directory
 
 
 class HistoryWriteError(RuntimeError):
@@ -13,11 +14,7 @@ class HistoryWriteError(RuntimeError):
 
 
 def default_history_directory() -> Path:
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "CleanFolder"
-    if sys.platform == "win32":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "CleanFolder"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "CleanFolder"
+    return data_directory()
 
 
 class HistoryStore:

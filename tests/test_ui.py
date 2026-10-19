@@ -2,6 +2,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,12 +13,14 @@ try:
     from PySide6.QtGui import QColor, QPalette
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    from cleanfolder.ui import MainWindow
+    from cleanfolder.desktop.window import MainWindow
 except ImportError:
     QApplication = None
 
-from cleanfolder.history import HistoryStore
-from cleanfolder.service import Organizer
+from cleanfolder.core.history import HistoryStore
+from cleanfolder.core.filesystem import SafetyError
+from cleanfolder.core.service import Organizer
+from cleanfolder.core.settings import Settings, SettingsError
 
 
 @unittest.skipIf(QApplication is None, "PySide6가 설치되어 있지 않습니다.")
@@ -167,6 +170,107 @@ class WindowTests(unittest.TestCase):
         finally:
             self.application.setPalette(original)
             self.application.processEvents()
+
+    def test_settings_save_refreshes_preview_and_persists(self):
+        (self.root / "photo.png").write_text("photo")
+        (self.root / "keep.pdf").write_text("keep")
+        self.load_folder()
+        self.window.nav_buttons[3].click()
+        self.assertFalse(self.window.folder_card.isVisible())
+        self.assertFalse(self.window.footer.isVisible())
+        page = self.window.settings_page
+        page.folder_fields["Images"].setText("사진")
+        page.excluded_names.setPlainText("keep.pdf")
+        page.save_button.click()
+        self.assertFalse(self.window.nav_buttons[3].isEnabled())
+        self.wait_until_idle()
+        self.assertFalse(page.dirty)
+        self.assertEqual(self.window.tabs.currentIndex(), 3)
+        self.assertEqual(self.window.preview_table.rowCount(), 1)
+        self.assertEqual(self.window.preview_table.item(0, 3).text(), "사진/photo.png")
+        self.assertEqual(Organizer(self.organizer.history).settings.folder_names["Images"], "사진")
+        self.assertTrue((self.root / "photo.png").exists())
+
+    def test_settings_invalid_draft_and_cancel(self):
+        page = self.window.settings_page
+        page.folder_fields["Images"].setText("../unsafe")
+        page.save_button.click()
+        self.assertTrue(page.dirty)
+        self.assertIn("사용할 수 없는", page.feedback.text())
+        self.assertEqual(self.organizer.settings.folder_names["Images"], "Images")
+        page.cancel_button.click()
+        self.assertFalse(page.dirty)
+        self.assertEqual(page.folder_fields["Images"].text(), "Images")
+
+    def test_defaults_are_only_a_draft_until_saved(self):
+        self.window.apply_preferences(replace(Settings(), theme="dark"))
+        page = self.window.settings_page
+        page.defaults_button.click()
+        self.assertTrue(page.dirty)
+        self.assertEqual(page.appearance.currentData(), "system")
+        self.assertEqual(self.organizer.settings.theme, "dark")
+        page.cancel_button.click()
+        self.assertEqual(page.appearance.currentData(), "dark")
+
+    def test_settings_write_failure_leaves_preferences_and_draft_intact(self):
+        page = self.window.settings_page
+        page.appearance.setCurrentIndex(page.appearance.findData("dark"))
+        with patch.object(self.organizer.settings_store, "save", side_effect=SettingsError("disk full")):
+            with patch.object(QMessageBox, "warning") as warning:
+                page.save_button.click()
+                warning.assert_called_once()
+        self.assertEqual(self.organizer.settings.theme, "system")
+        self.assertTrue(page.dirty)
+
+    def test_forced_theme_ignores_system_palette(self):
+        original = QPalette(self.application.palette())
+        try:
+            self.window.apply_preferences(replace(Settings(), theme="dark"))
+            palette = QPalette(original)
+            palette.setColor(QPalette.ColorRole.Window, QColor("#FFFFFF"))
+            self.application.setPalette(palette)
+            self.application.processEvents()
+            self.assertTrue(self.window._theme_dark)
+            self.window.apply_preferences(replace(Settings(), theme="system"))
+            self.assertFalse(self.window._theme_dark)
+        finally:
+            self.application.setPalette(original)
+            self.application.processEvents()
+
+    def test_settings_lock_conflict_is_shown_without_discarding_draft(self):
+        page = self.window.settings_page
+        page.folder_fields["Images"].setText("사진")
+        with patch.object(self.organizer, "apply_settings", side_effect=SafetyError("다른 작업이 진행 중입니다")):
+            with patch.object(QMessageBox, "warning") as warning:
+                page.save_button.click()
+                warning.assert_called_once()
+        self.assertTrue(page.dirty)
+        self.assertEqual(self.organizer.settings.folder_names["Images"], "Images")
+
+    def test_selected_folder_is_remembered_without_losing_draft(self):
+        page = self.window.settings_page
+        page.folder_fields["Images"].setText("사진")
+        with patch("cleanfolder.desktop.window.QFileDialog.getExistingDirectory", return_value=str(self.root)):
+            self.window.choose_folder()
+        self.wait_until_idle()
+        self.assertTrue(page.dirty)
+        self.assertEqual(page.folder_fields["Images"].text(), "사진")
+        page.save_button.click()
+        self.wait_until_idle()
+        self.assertEqual(Organizer(self.organizer.history).settings.last_folder, str(self.root))
+
+    def test_startup_folder_only_previews_and_missing_folder_is_safe(self):
+        (self.root / "report.pdf").write_text("report")
+        self.organizer.apply_settings(replace(Settings(), startup_mode="default", default_folder=str(self.root)))
+        self.window.load_startup_folder()
+        self.wait_until_idle()
+        self.assertEqual(self.window.preview_table.rowCount(), 1)
+        self.assertTrue((self.root / "report.pdf").exists())
+        self.assertFalse((self.root / "PDF").exists())
+        self.organizer.apply_settings(replace(Settings(), startup_mode="default", default_folder=str(self.base / "missing")))
+        self.window.load_startup_folder()
+        self.assertIn("시작 폴더를 찾을 수 없습니다", self.window.statusBar().currentMessage())
+        self.assertTrue(self.window.choose_button.isEnabled())
 
 
 if __name__ == "__main__":

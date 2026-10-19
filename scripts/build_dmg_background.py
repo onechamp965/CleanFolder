@@ -12,7 +12,7 @@ from PySide6.QtSvg import QSvgRenderer
 def build_background(output: Path):
     application = QGuiApplication.instance() or QGuiApplication([])
     project = Path(__file__).resolve().parents[1]
-    renderer = QSvgRenderer(str(project / "packaging" / "installer-background.svg"))
+    renderer = QSvgRenderer(str(project / "packaging" / "macos" / "installer-background.svg"))
     if not renderer.isValid():
         raise ValueError("설치 화면 배경을 읽을 수 없습니다.")
     output.mkdir(parents=True, exist_ok=True)

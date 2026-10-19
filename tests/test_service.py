@@ -4,10 +4,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanfolder.categories import CATEGORIES, classify
-from cleanfolder.filesystem import SafetyError, available_name, identity, move_exclusive
-from cleanfolder.history import HistoryStore, HistoryWriteError
-from cleanfolder.service import Organizer
+from cleanfolder.core.categories import CATEGORIES, classify
+from cleanfolder.core.filesystem import SafetyError, available_name, identity, move_exclusive
+from cleanfolder.core.history import HistoryStore, HistoryWriteError
+from cleanfolder.core.service import Organizer
 
 
 class OrganizerTests(unittest.TestCase):
@@ -135,7 +135,7 @@ class OrganizerTests(unittest.TestCase):
                 raise PermissionError("source locked")
             return original_unlink(path, **kwargs)
 
-        with patch("cleanfolder.filesystem.os.unlink", side_effect=fail_source):
+        with patch("cleanfolder.core.filesystem.os.unlink", side_effect=fail_source):
             with self.assertRaises(PermissionError):
                 move_exclusive(source, destination, identity(source))
         self.assertTrue(source.is_file())
@@ -231,7 +231,7 @@ class OrganizerTests(unittest.TestCase):
 
     def test_failed_link_keeps_source_and_can_be_reconciled(self):
         self.file("file.txt")
-        with patch("cleanfolder.filesystem.os.link", side_effect=OSError("unsupported")):
+        with patch("cleanfolder.core.filesystem.os.link", side_effect=OSError("unsupported")):
             result = self.organize()
         self.assertEqual(result.completed, 0)
         self.assertTrue(result.issues)
@@ -248,7 +248,7 @@ class OrganizerTests(unittest.TestCase):
 
     def test_temporary_history_write_failure_stops_operation(self):
         self.file("file.txt")
-        with patch("cleanfolder.history.tempfile.mkstemp", side_effect=OSError("disk full")):
+        with patch("cleanfolder.core.history.tempfile.mkstemp", side_effect=OSError("disk full")):
             with self.assertRaises(HistoryWriteError):
                 self.organize()
         self.assertTrue((self.root / "file.txt").is_file())

@@ -5,12 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .categories import classify
 from .filesystem import (
     SafetyError, available_name, identity, move_exclusive, name_key,
-    regular_file, verify_directory, verify_file,
+    regular_file, suggest_name, verify_directory, verify_file,
 )
 from .history import HistoryStore
+from .settings import Settings, SettingsStore
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class PlannedFile:
     identity: list[int]
     size: int
     modified: int
+    target: str = ""
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,8 @@ class Preview:
     identity: list[int]
     files: tuple[PlannedFile, ...]
     skipped: int
+    settings_key: str = ""
+    existing_folders: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -47,39 +50,80 @@ class Installer:
 class Organizer:
     def __init__(self, history: HistoryStore | None = None):
         self.history = history or HistoryStore()
+        self.settings_store = SettingsStore(self.history.directory)
+        self.settings = self.settings_store.load()
+
+    def apply_settings(self, settings: Settings) -> None:
+        with self.history.locked():
+            self.settings = self.settings_store.save(settings)
+
+    def _managed_folders(self, root: Path, root_identity: list[int]) -> dict[str, tuple[str, list[int]]]:
+        managed = {}
+        for job in self.jobs(root):
+            if job["root_identity"] != root_identity:
+                continue
+            for action in job["actions"]:
+                category, name = action["category"], action["folder"]
+                if category in managed or category not in self.settings.folder_names or Path(name).name != name or name in (".", ".."):
+                    continue
+                expected = job["folders"].get(name)
+                desired = job.get("folder_labels", {}).get(name, category)
+                if expected is None or name_key(desired) != name_key(self.settings.folder_names[category]):
+                    continue
+                try:
+                    verify_directory(root / name, expected)
+                except (OSError, SafetyError):
+                    continue
+                managed[category] = (name, expected)
+        return managed
 
     def preview(self, folder: Path) -> Preview:
         root = folder.expanduser().resolve(strict=True)
         root_identity = identity(root)
         verify_directory(root, root_identity)
-        if root == self.history.directory:
-            raise SafetyError("앱의 작업 기록 폴더 자체는 정리할 수 없습니다.")
+        if root == self.history.directory or self.history.directory in root.parents:
+            raise SafetyError("앱의 작업 기록과 설정 폴더는 정리할 수 없습니다.")
         reserved = set()
         folders = {}
+        existing_folders = {}
+        destination_names = {}
+        managed = self._managed_folders(root, root_identity) if self.settings.folder_mode == "managed" else {}
         files = []
         skipped = 0
         with os.scandir(root) as entries:
             snapshot = sorted(entries, key=lambda entry: name_key(entry.name))
         for entry in snapshot:
-            if entry.name.startswith(".") or not entry.is_file(follow_symlinks=False):
+            if entry.name.startswith(".") or self.settings.excludes(entry.name) or not entry.is_file(follow_symlinks=False):
                 skipped += 1
                 continue
             information = entry.stat(follow_symlinks=False)
-            category = classify(entry.name)
+            category = self.settings.classify(entry.name)
             if category not in folders:
-                folders[category] = available_name(root, category, reserved)
+                if category in managed:
+                    name, expected = managed[category]
+                    verify_directory(root / name, expected)
+                    folders[category] = name
+                    existing_folders[name] = expected
+                    destination_names[name] = {name_key(child.name) for child in (root / name).iterdir()}
+                else:
+                    folders[category] = available_name(root, self.settings.folder_names[category], reserved)
+                    destination_names[folders[category]] = set()
                 reserved.add(name_key(folders[category]))
+            target = suggest_name(entry.name, destination_names[folders[category]])
+            destination_names[folders[category]].add(name_key(target))
             files.append(PlannedFile(
                 entry.name, category, folders[category],
                 [information.st_dev, information.st_ino], information.st_size,
-                information.st_mtime_ns,
+                information.st_mtime_ns, target,
             ))
-        return Preview(root, root_identity, tuple(files), skipped)
+        return Preview(root, root_identity, tuple(files), skipped, self.settings.sorting_key(), existing_folders)
 
     def organize(self, preview: Preview) -> Result:
         result = Result()
         with self.history.locked():
             verify_directory(preview.root, preview.identity)
+            if preview.settings_key != self.settings.sorting_key():
+                raise SafetyError("정리 설정이 변경되었습니다. 다시 미리보기 해 주세요.")
             if not preview.files:
                 return result
             for item in preview.files:
@@ -89,24 +133,36 @@ class Organizer:
                 if (information.st_size, information.st_mtime_ns) != (item.size, item.modified):
                     raise SafetyError("미리보기 이후 파일이 변경되었습니다. 다시 미리보기 해 주세요.")
             for folder in {item.folder for item in preview.files}:
-                if os.path.lexists(preview.root / folder):
+                if folder in preview.existing_folders:
+                    candidates = self._managed_folders(preview.root, preview.identity)
+                    if not any(name == folder and expected == preview.existing_folders[folder] for name, expected in candidates.values()):
+                        raise SafetyError("앱이 만든 분류 폴더가 변경되었습니다. 다시 미리보기 해 주세요.")
+                    verify_directory(preview.root / folder, preview.existing_folders[folder])
+                elif os.path.lexists(preview.root / folder):
                     raise SafetyError("미리보기 이후 대상 폴더가 생겼습니다. 다시 미리보기 해 주세요.")
             job = {
                 "version": 1, "id": uuid.uuid4().hex,
                 "created_at": datetime.now().astimezone().isoformat(),
                 "root": str(preview.root), "root_identity": preview.identity,
                 "state": "active", "folders": {}, "actions": [],
+                "created_folders": [], "folder_labels": {},
             }
             self.history.save(job)
             for item in preview.files:
                 verify_directory(preview.root, preview.identity)
                 folder = preview.root / item.folder
                 if item.folder not in job["folders"]:
-                    folder.mkdir()
-                    job["folders"][item.folder] = identity(folder)
+                    if item.folder in preview.existing_folders:
+                        verify_directory(folder, preview.existing_folders[item.folder])
+                        job["folders"][item.folder] = preview.existing_folders[item.folder]
+                    else:
+                        folder.mkdir()
+                        job["folders"][item.folder] = identity(folder)
+                        job["created_folders"].append(item.folder)
+                    job["folder_labels"][item.folder] = self.settings.folder_names[item.category]
                     self.history.save(job)
                 verify_directory(folder, job["folders"][item.folder])
-                target = available_name(folder, item.name)
+                target = available_name(folder, item.target or item.name)
                 action = {
                     "name": item.name, "folder": item.folder, "target": target,
                     "identity": item.identity, "category": item.category,
@@ -139,6 +195,9 @@ class Organizer:
         for folder in job["folders"]:
             if Path(folder).name != folder or folder in (".", ".."):
                 raise SafetyError("올바르지 않은 폴더 기록입니다.")
+        created = job.get("created_folders", list(job["folders"]))
+        if not isinstance(created, list) or any(name not in job["folders"] for name in created):
+            raise SafetyError("생성한 폴더 기록이 올바르지 않습니다.")
         for action in job["actions"]:
             for key in ("name", "target", "restore_name"):
                 name = action[key]
@@ -190,7 +249,8 @@ class Organizer:
                     self.history.save(job)
                 except (OSError, SafetyError) as error:
                     result.issues.append(str(error))
-            for name, expected in job["folders"].items():
+            for name in job.get("created_folders", list(job["folders"])):
+                expected = job["folders"][name]
                 path = root / name
                 if not os.path.lexists(path):
                     continue
@@ -210,7 +270,7 @@ class Organizer:
         candidates = []
         with os.scandir(root) as entries:
             for entry in entries:
-                if not entry.name.startswith(".") and entry.is_file(follow_symlinks=False) and classify(entry.name) == "Installers":
+                if not entry.name.startswith(".") and not self.settings.excludes(entry.name) and entry.is_file(follow_symlinks=False) and self.settings.classify(entry.name) == "Installers":
                     candidates.append(Installer(Path(entry.path), identity(Path(entry.path)), identity(root)))
         for job in self.jobs(root):
             self._validate_job(job)
@@ -219,6 +279,8 @@ class Organizer:
                     continue
                 parent = root / action["folder"]
                 path = parent / action["target"]
+                if self.settings.excludes(path.name):
+                    continue
                 try:
                     verify_directory(parent, job["folders"][action["folder"]])
                     verify_file(path, action["identity"])

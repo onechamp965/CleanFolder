@@ -1,12 +1,15 @@
 from pathlib import Path
 from importlib.metadata import distribution
 import re
+import sys
 import sysconfig
 
 from cleanfolder import __version__
 
 
-project = Path(SPECPATH).parent
+project = Path(SPECPATH).parents[1]
+sys.path.insert(0, str(project))
+from scripts.bundle_policy import EXCLUDED_QT_MODULES
 assets = project / "cleanfolder" / "assets"
 wheel = distribution("PySide6_Essentials").read_text("WHEEL") or ""
 minimum_versions = [tuple(map(int, version)) for version in re.findall(r"macosx_(\d+)_(\d+)", wheel)]
@@ -16,8 +19,9 @@ minimum_version = ".".join(map(str, max(minimum_versions)))
 analysis = Analysis(
     [str(project / "packaging" / "launcher.py")],
     pathex=[str(project)],
-    datas=[(str(assets), "cleanfolder/assets")],
-    excludes=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml"],
+    datas=[(str(assets / name), "cleanfolder/assets") for name in ("app-icon.png", "checkmark.svg")],
+    hookspath=[str(project / "packaging" / "hooks")],
+    excludes=["PySide6." + module for module in EXCLUDED_QT_MODULES],
 )
 archive = PYZ(analysis.pure)
 executable = EXE(

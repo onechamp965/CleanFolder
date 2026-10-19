@@ -7,14 +7,14 @@ def main() -> int:
     parser.add_argument("--preview", type=Path, metavar="FOLDER", help="화면 없이 정리 미리보기")
     arguments = parser.parse_args()
     if arguments.preview:
-        from .service import Organizer
+        from .core.service import Organizer
 
         preview = Organizer().preview(arguments.preview)
         for item in preview.files:
-            print(f"{item.name} → {item.folder}/{item.name}")
+            print(f"{item.name} → {item.folder}/{item.target or item.name}")
         print(f"정리할 파일 {len(preview.files)}개 · 제외 {preview.skipped}개")
         return 0
-    from .ui import run
+    from .desktop.window import run
 
     return run()
 

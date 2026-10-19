@@ -16,6 +16,7 @@ def build_icons():
     if not renderer.isValid():
         raise ValueError("앱 아이콘 SVG를 읽을 수 없습니다.")
     chunks = []
+    windows_images = []
     for kind, size in ((b"icp4", 16), (b"icp5", 32), (b"icp6", 64),
                        (b"ic07", 128), (b"ic08", 256), (b"ic09", 512), (b"ic10", 1024)):
         image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
@@ -28,11 +29,21 @@ def build_icons():
         if not image.save(buffer, "PNG"):
             raise OSError("아이콘 PNG를 만들 수 없습니다.")
         png = bytes(buffer.data())
+        if size <= 256:
+            windows_images.append((size, png))
         chunks.append(kind + struct.pack(">I", len(png) + 8) + png)
         if size == 1024:
             (assets / "app-icon.png").write_bytes(png)
     payload = b"".join(chunks)
     (assets / "app-icon.icns").write_bytes(b"icns" + struct.pack(">I", len(payload) + 8) + payload)
+    offset = 6 + 16 * len(windows_images)
+    entries = []
+    for size, png in windows_images:
+        entries.append(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(png), offset))
+        offset += len(png)
+    (assets / "app-icon.ico").write_bytes(
+        struct.pack("<HHH", 0, 1, len(windows_images)) + b"".join(entries) + b"".join(png for size, png in windows_images)
+    )
     print(f"PNG / macOS ICNS 아이콘 생성 완료: {assets}")
     return application
 

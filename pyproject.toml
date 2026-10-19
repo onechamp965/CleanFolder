@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cleanfolder-desktop"
-version = "1.1.1"
-description = "A safe, preview-first folder organizer for macOS"
+version = "1.3.0"
+description = "A safe, preview-first desktop folder organizer"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]
 
@@ -19,4 +19,4 @@ dependencies = {file = ["requirements.txt"]}
 include = ["cleanfolder*"]
 
 [tool.setuptools.package-data]
-cleanfolder = ["assets/*.svg", "assets/*.png", "assets/*.icns"]
+cleanfolder = ["assets/*.svg", "assets/*.png", "assets/*.icns", "assets/*.ico"]

@@ -1,9 +1,10 @@
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QSize, QThread, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QFontDatabase, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
@@ -11,9 +12,13 @@ from PySide6.QtWidgets import (
     QStackedWidget, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from . import __version__
+from .. import __version__
+from ..core.filesystem import SafetyError
 from .icons import app_icon, symbol_icon
-from .service import Organizer, Preview, Result
+from ..core.service import Organizer, Preview, Result
+from ..core.settings import Settings, SettingsError
+from ..platforms.environment import trash_location
+from .settings_page import SettingsPage
 from .theme import category_color, colors, stylesheet
 from .widgets import CategoryDelegate, EmptyState, StatCard, label
 
@@ -112,6 +117,13 @@ class MainWindow(QMainWindow):
             sidebar_layout.addWidget(button)
         self.nav_buttons[0].setChecked(True)
         sidebar_layout.addStretch()
+        settings_button = QPushButton("설정")
+        settings_button.setObjectName("navigation")
+        settings_button.setCheckable(True)
+        settings_button.setAutoExclusive(True)
+        settings_button.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
+        self.nav_buttons.append(settings_button)
+        sidebar_layout.addWidget(settings_button)
         self.undo_button = QPushButton("원래대로 돌리기")
         self.undo_button.setObjectName("quiet")
         self.undo_button.setToolTip("선택한 폴더의 최근 정리 작업을 복구합니다")
@@ -134,6 +146,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(page_heading)
 
         folder_card = QFrame()
+        self.folder_card = folder_card
         folder_card.setObjectName("card")
         folder_row = QHBoxLayout(folder_card)
         folder_row.setContentsMargins(18, 16, 18, 16)
@@ -158,14 +171,16 @@ class MainWindow(QMainWindow):
         folder_row.addWidget(self.choose_button)
         layout.addWidget(folder_card)
 
-        stats_row = QHBoxLayout()
+        self.stats_widget = QWidget()
+        stats_row = QHBoxLayout(self.stats_widget)
+        stats_row.setContentsMargins(0, 0, 0, 0)
         stats_row.setSpacing(12)
         self.file_stat = StatCard("정리할 파일")
         self.size_stat = StatCard("전체 크기")
         self.protected_stat = StatCard("안전하게 제외")
         for card in (self.file_stat, self.size_stat, self.protected_stat):
             stats_row.addWidget(card, 1)
-        layout.addLayout(stats_row)
+        layout.addWidget(self.stats_widget)
 
         self.tabs = QTabWidget()
         self.tabs.tabBar().hide()
@@ -209,7 +224,7 @@ class MainWindow(QMainWindow):
         installers_layout = QVBoxLayout(installers_page)
         installers_layout.setContentsMargins(14, 16, 14, 14)
         installers_layout.setSpacing(14)
-        explanation = label("필요 없는 설치 파일만 선택하세요. 복원은 Finder의 휴지통에서 할 수 있어요.", "secondary")
+        explanation = label(f"필요 없는 설치 파일만 선택하세요. 복원은 {trash_location()}에서 할 수 있어요.", "secondary")
         explanation.setWordWrap(True)
         installers_layout.addWidget(explanation)
         self.installers_table = make_table(["선택", "설치 파일", "위치"])
@@ -246,15 +261,23 @@ class MainWindow(QMainWindow):
         self.history_stack.setCurrentWidget(self.empty_history)
         history_layout.addWidget(self.history_stack, 1)
         self.tabs.addTab(history_page, "작업 기록")
+        self.settings_page = SettingsPage(self.organizer.settings)
+        self.settings_page.saveRequested.connect(self.apply_preferences)
+        self.tabs.addTab(self.settings_page, "설정")
         layout.addWidget(self.tabs, 1)
 
-        actions = QHBoxLayout()
+        self.footer = QWidget()
+        actions = QHBoxLayout(self.footer)
+        actions.setContentsMargins(0, 0, 0, 0)
         footer_details = QVBoxLayout()
         footer_details.setSpacing(5)
         self.summary = label("폴더를 선택하면 정리할 파일을 확인할 수 있어요.", "secondary")
         self.summary.setWordWrap(True)
         footer_details.addWidget(self.summary)
         self.safety_note = label("기존 폴더와 폴더 안의 파일은 그대로 유지됩니다.", "muted")
+        if self.organizer.settings.folder_mode == "managed":
+            self.safety_note.setText("CleanFolder가 만든 분류 폴더만 재사용합니다. 다른 폴더는 보호됩니다.")
+        self.safety_note.setWordWrap(True)
         footer_details.addWidget(self.safety_note)
         actions.addLayout(footer_details, 1)
         self.organize_button = QPushButton("정리하기")
@@ -262,7 +285,7 @@ class MainWindow(QMainWindow):
         self.organize_button.setDefault(True)
         self.organize_button.clicked.connect(self.organize)
         actions.addWidget(self.organize_button)
-        layout.addLayout(actions)
+        layout.addWidget(self.footer)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setFixedHeight(3)
@@ -277,6 +300,11 @@ class MainWindow(QMainWindow):
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.choose_folder)
         file_menu.addAction(self.open_action)
+        self.settings_action = QAction("설정…", self)
+        self.settings_action.setShortcut(QKeySequence.StandardKey.Preferences)
+        self.settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        self.settings_action.triggered.connect(lambda: self.tabs.setCurrentIndex(3))
+        file_menu.addAction(self.settings_action)
         quit_action = QAction("종료", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
@@ -294,10 +322,14 @@ class MainWindow(QMainWindow):
         QApplication.instance().paletteChanged.connect(self.apply_theme)
         self.apply_theme()
         self.update_buttons()
+        if self.organizer.settings.startup_folder() is not None:
+            QTimer.singleShot(0, self.load_startup_folder)
 
     def apply_theme(self, palette: QPalette | None = None):
         application_palette = palette if isinstance(palette, QPalette) else QApplication.palette()
         dark = application_palette.color(QPalette.ColorRole.Window).lightness() < 128
+        if self.organizer.settings.theme != "system":
+            dark = self.organizer.settings.theme == "dark"
         if self._theme_dark == dark:
             return
         self._theme_dark = dark
@@ -323,7 +355,7 @@ class MainWindow(QMainWindow):
             button.setIcon(symbol_icon(name, button_palette))
             button.setIconSize(QSize(16, 16))
         self.open_action.setIcon(symbol_icon("folder", palette))
-        for index, name in enumerate(("preview", "installers", "history")):
+        for index, name in enumerate(("preview", "installers", "history", "settings")):
             navigation_palette = QPalette(palette)
             if self.nav_buttons[index].isChecked():
                 navigation_palette.setColor(QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText, QColor(self.theme["accent"]))
@@ -354,15 +386,18 @@ class MainWindow(QMainWindow):
         return self._file_icons[category]
 
     def change_page(self, index: int):
-        titles = ("파일 정리", "설치 파일", "작업 기록")
+        titles = ("파일 정리", "설치 파일", "작업 기록", "설정")
         descriptions = ("어디로 옮길지 먼저 확인하고, 안심하고 정리하세요.",
                         "필요 없는 설치 파일을 골라 폴더를 더 가볍게 만드세요.",
-                        "정리한 내용을 확인하고, 필요하면 원래대로 돌리세요.")
+                        "정리한 내용을 확인하고, 필요하면 원래대로 돌리세요.",
+                        "정리 방식부터 화면까지, 나에게 맞게 설정하세요.")
         self.page_title.setText(titles[index])
         self.page_description.setText(descriptions[index])
         self.nav_buttons[index].setChecked(True)
         self.organize_button.setVisible(index == 0)
         self.organize_button.setDefault(index == 0)
+        for widget in (self.folder_card, self.stats_widget, self.footer):
+            widget.setVisible(index != 3)
         self.update_icons()
 
     def changeEvent(self, event: QEvent):
@@ -374,6 +409,9 @@ class MainWindow(QMainWindow):
         busy = self.task is not None
         self.choose_button.setEnabled(not busy)
         self.open_action.setEnabled(not busy)
+        self.settings_action.setEnabled(not busy)
+        self.nav_buttons[3].setEnabled(not busy)
+        self.settings_page.setEnabled(not busy)
         self.refresh_button.setEnabled(not busy and self.folder is not None)
         self.organize_button.setEnabled(not busy and self.preview is not None and bool(self.preview.files))
         self.undo_button.setEnabled(not busy and self.latest_job is not None)
@@ -397,12 +435,49 @@ class MainWindow(QMainWindow):
             return
         path = QFileDialog.getExistingDirectory(self, "정리할 폴더 선택", str(self.folder or Path.home()))
         if path:
-            self.folder = Path(path).resolve()
-            self.folder_name.setText(self.folder.name or str(self.folder))
-            self.folder_text.setText(self.display_path(self.folder))
-            self.folder_text.setToolTip(str(self.folder))
-            self.choose_button.setText("변경")
-            self.refresh()
+            self.select_folder(Path(path))
+
+    def select_folder(self, path: Path):
+        self.folder = path.resolve()
+        self.folder_name.setText(self.folder.name or str(self.folder))
+        self.folder_text.setText(self.display_path(self.folder))
+        self.folder_text.setToolTip(str(self.folder))
+        self.choose_button.setText("변경")
+        try:
+            self.organizer.apply_settings(replace(self.organizer.settings, last_folder=str(self.folder)))
+            if not self.settings_page.dirty:
+                self.settings_page.load(self.organizer.settings)
+        except (SettingsError, SafetyError, OSError) as error:
+            self.statusBar().showMessage(f"최근 폴더를 저장하지 못했습니다: {error}")
+        self.refresh()
+
+    def load_startup_folder(self):
+        folder = self.organizer.settings.startup_folder()
+        if folder is None or self.task is not None:
+            return
+        if not folder.is_dir():
+            self.statusBar().showMessage("시작 폴더를 찾을 수 없습니다. 다른 폴더를 선택해 주세요.")
+            return
+        self.select_folder(folder)
+
+    def apply_preferences(self, settings: Settings):
+        if self.task is not None:
+            return
+        try:
+            self.organizer.apply_settings(replace(settings, last_folder=self.organizer.settings.last_folder))
+        except (SettingsError, SafetyError, OSError) as error:
+            QMessageBox.warning(self, "설정을 저장하지 못했어요", str(error))
+            return
+        self.settings_page.load(self.organizer.settings)
+        self.apply_theme()
+        self.safety_note.setText(
+            "CleanFolder가 만든 분류 폴더만 재사용합니다. 다른 폴더는 보호됩니다."
+            if settings.folder_mode == "managed" else "기존 폴더와 폴더 안의 파일은 그대로 유지됩니다."
+        )
+        self.preview = None
+        self.update_buttons()
+        self.refresh()
+        self.statusBar().showMessage("설정을 저장했습니다. 시작 폴더는 다음 실행부터 적용됩니다.", 7000)
 
     @staticmethod
     def display_path(path: Path) -> str:
@@ -475,7 +550,7 @@ class MainWindow(QMainWindow):
         self.choose_button.setText("변경")
         self.preview_table.setRowCount(len(self.preview.files))
         for row, item in enumerate(self.preview.files):
-            values = (item.name, size_text(item.size), item.category, f"{item.folder}/{item.name}")
+            values = (item.name, size_text(item.size), item.category, f"{item.folder}/{item.target or item.name}")
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
@@ -493,7 +568,7 @@ class MainWindow(QMainWindow):
         self.file_stat.value.setText(f"{len(self.preview.files)}개")
         self.size_stat.value.setText(size_text(sum(item.size for item in self.preview.files)))
         self.protected_stat.value.setText(f"{self.preview.skipped}개")
-        self.protected_stat.setToolTip("기존 폴더, 숨김 파일, 심볼릭 링크 등 정리에서 제외한 항목입니다")
+        self.protected_stat.setToolTip("기존 폴더, 숨김 파일, 심볼릭 링크, 설정의 제외 항목입니다")
         self.file_badge.setText(f"{len(self.preview.files)}개")
         self.installers_table.blockSignals(True)
         self.installers_table.setRowCount(len(self.installer_items))
@@ -517,7 +592,7 @@ class MainWindow(QMainWindow):
             for column, value in enumerate(values):
                 self.history_table.setItem(row, column, QTableWidgetItem(value))
         self.history_stack.setCurrentWidget(self.history_table if jobs else self.empty_history)
-        self.summary.setText(f"정리할 파일 {len(self.preview.files)}개 · 폴더·숨김 파일 등 {self.preview.skipped}개 제외")
+        self.summary.setText(f"정리할 파일 {len(self.preview.files)}개 · 보호·제외 항목 {self.preview.skipped}개")
         self.update_buttons()
 
     def organize(self):
@@ -530,7 +605,7 @@ class MainWindow(QMainWindow):
     def undo(self):
         if self.folder is None or self.latest_job is None or self.task is not None:
             return
-        reply = QMessageBox.question(self, "원래대로 돌리기", "이 폴더의 최근 정리 작업을 복구할까요?\n같은 이름이 있으면 새 이름으로 복구합니다.\n휴지통으로 보낸 파일은 Finder에서 복원해 주세요.",
+        reply = QMessageBox.question(self, "원래대로 돌리기", f"이 폴더의 최근 정리 작업을 복구할까요?\n같은 이름이 있으면 새 이름으로 복구합니다.\n휴지통으로 보낸 파일은 {trash_location()}에서 복원해 주세요.",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                                      QMessageBox.StandardButton.Cancel)
         if reply == QMessageBox.StandardButton.Yes:
@@ -542,7 +617,7 @@ class MainWindow(QMainWindow):
         selected = self.selected_installers()
         if not selected or self.folder is None or self.task is not None:
             return
-        reply = QMessageBox.question(self, "휴지통으로 이동", f"선택한 설치 파일 {len(selected)}개를 휴지통으로 이동할까요?\n복원은 Finder의 휴지통에서 할 수 있습니다.",
+        reply = QMessageBox.question(self, "휴지통으로 이동", f"선택한 설치 파일 {len(selected)}개를 휴지통으로 이동할까요?\n복원은 {trash_location()}에서 할 수 있습니다.",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                                      QMessageBox.StandardButton.Cancel)
         if reply == QMessageBox.StandardButton.Yes:
@@ -579,6 +654,10 @@ def run() -> int:
     font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
     font.setPointSize(13)
     application.setFont(font)
-    window = MainWindow()
+    try:
+        window = MainWindow()
+    except SettingsError as error:
+        QMessageBox.critical(None, "설정을 확인해 주세요", f"{error}\n설정 파일과 작업 기록은 변경하지 않았습니다.")
+        return 1
     window.show()
     return application.exec()
