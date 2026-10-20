@@ -3,6 +3,7 @@ from pathlib import Path
 
 CATEGORIES = {
     "Word": (".doc", ".docx", ".docm", ".dot", ".dotx", ".odt"),
+    "Hangul": (".hwp", ".hwpx"),
     "PowerPoint": (".ppt", ".pptx", ".pptm", ".pps", ".ppsx", ".odp"),
     "Excel": (".xls", ".xlsx", ".xlsm", ".xlsb", ".csv", ".ods"),
     "PDF": (".pdf",),

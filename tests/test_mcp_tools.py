@@ -59,6 +59,19 @@ class FolderToolsTests(unittest.TestCase):
         self.tools.organize_files(preview["preview_id"], approved=True)
         self.assertEqual((self.root / "PDF/first.pdf").read_text(), "first")
 
+    def test_hangul_scan_preview_organize_and_undo(self):
+        for name in ("보고서.hwp", "계획서.HWPX"):
+            (self.root / name).write_text(name)
+        scan = self.tools.scan_folder(str(self.root))
+        self.assertEqual([item["category"] for item in scan["files"]], ["Hangul", "Hangul"])
+        preview = self.preview()
+        self.assertTrue(all(item["destination"].startswith("Hangul/") for item in preview["moves"]))
+        result = self.tools.organize_files(preview["preview_id"], approved=True)
+        self.assertEqual(result["completed"], 2)
+        restored = self.tools.undo_last_operation(str(self.root), result["operation_id"], approved=True)
+        self.assertEqual(restored["completed"], 2)
+
+
     def test_selection_is_bound_to_the_approved_preview(self):
         (self.root / "keep.dmg").write_text("installer")
         (self.root / "move.pdf").write_text("report")

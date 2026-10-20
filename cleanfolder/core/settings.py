@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from .categories import CATEGORIES
-from .filesystem import name_key
+from .filesystem import name_key, suggest_name
 
 
 class SettingsError(ValueError):
@@ -130,7 +130,16 @@ class SettingsStore:
             document = json.loads(self.path.read_text(encoding="utf-8"))
             if document["version"] != 1 or not isinstance(document["settings"], dict):
                 raise ValueError("설정 형식")
-            return Settings(**document["settings"]).validated()
+            data = dict(document["settings"])
+            legacy_categories = set(CATEGORIES) - {"Hangul"}
+            folders, extensions = data.get("folder_names"), data.get("extensions")
+            if (isinstance(folders, dict) and isinstance(extensions, dict)
+                    and set(folders) == legacy_categories and set(extensions) == legacy_categories):
+                assigned = {normalize_extension(extension) for values in extensions.values() for extension in values}
+                data["folder_names"] = dict(folders, Hangul=suggest_name("Hangul", {name_key(name) for name in folders.values()}))
+                data["extensions"] = dict(extensions, Hangul=tuple(extension for extension in CATEGORIES["Hangul"]
+                                                                  if extension not in assigned))
+            return Settings(**data).validated()
         except (OSError, ValueError, TypeError, KeyError) as error:
             raise SettingsError(f"설정 파일을 읽을 수 없습니다: {self.path}") from error
 

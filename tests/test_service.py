@@ -50,6 +50,19 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(self.organizer.undo(self.root).completed, 1)
         self.assertEqual(kept.read_text(), "keep")
 
+    def test_hangul_organization_and_undo_preserve_existing_folders(self):
+        for name in ("보고서.hwp", "계획서.HWPX"):
+            self.file(name, name)
+        nested = self.file("Others/기존.hwp", "keep")
+        self.assertEqual(self.organize().completed, 2)
+        for name in ("보고서.hwp", "계획서.HWPX"):
+            self.assertEqual((self.root / "Hangul" / name).read_text(), name)
+        self.assertEqual(nested.read_text(), "keep")
+        self.assertEqual(Organizer(self.store).undo(self.root).completed, 2)
+        self.assertFalse((self.root / "Hangul").exists())
+        for name in ("보고서.hwp", "계획서.HWPX"):
+            self.assertEqual((self.root / name).read_text(), name)
+
     def test_empty_selected_subset_does_not_create_history(self):
         self.file("keep.pdf")
         preview = self.organizer.preview(self.root)

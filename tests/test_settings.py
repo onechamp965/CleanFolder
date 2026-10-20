@@ -1,6 +1,7 @@
+import json
 import tempfile
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,6 +52,49 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.organizer.settings.theme, "light")
         self.assertEqual(Organizer(self.history).settings.theme, "light")
         self.assertEqual(list(self.organizer.settings_store.path.parent.glob("*.tmp")), [])
+
+    def write_legacy_settings(self, settings):
+        data = asdict(settings)
+        data["folder_names"].pop("Hangul")
+        data["extensions"].pop("Hangul")
+        path = self.organizer.settings_store.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "settings": data}), encoding="utf-8")
+        return path
+
+    def test_legacy_settings_gain_hangul_without_changing_preferences(self):
+        settings = replace(Settings(), theme="dark", excluded_names=("keep-*",),
+                           folder_names=dict(Settings().folder_names, Images="사진"))
+        path = self.write_legacy_settings(settings)
+        original = path.read_bytes()
+        reopened = Organizer(self.history)
+        self.assertEqual(reopened.settings.classify("보고서.HWP"), "Hangul")
+        self.assertEqual(reopened.settings.classify("계획서.HWPX"), "Hangul")
+        self.assertEqual(reopened.settings.theme, "dark")
+        self.assertEqual(reopened.settings.excluded_names, ("keep-*",))
+        self.assertEqual(reopened.settings.folder_names["Images"], "사진")
+        self.assertEqual(path.read_bytes(), original)
+        reopened.apply_settings(reopened.settings)
+        self.assertEqual(Organizer(self.history).settings, reopened.settings)
+
+    def test_legacy_custom_hangul_assignment_and_folder_collision_are_preserved(self):
+        settings = Settings()
+        settings = replace(settings, folder_names=dict(settings.folder_names, Word="Hangul"),
+                           extensions=dict(settings.extensions, Word=(*settings.extensions["Word"], ".HWP")))
+        self.write_legacy_settings(settings)
+        loaded = self.organizer.settings_store.load()
+        self.assertEqual(loaded.classify("보고서.hwp"), "Word")
+        self.assertEqual(loaded.classify("보고서.hwpx"), "Hangul")
+        self.assertEqual(loaded.folder_names["Word"], "Hangul")
+        self.assertEqual(loaded.folder_names["Hangul"], "Hangul (1)")
+
+    def test_unrelated_missing_category_in_saved_settings_still_fails(self):
+        path = self.write_legacy_settings(Settings())
+        document = json.loads(path.read_text())
+        document["settings"]["extensions"].pop("PDF")
+        path.write_text(json.dumps(document))
+        with self.assertRaises(SettingsError):
+            self.organizer.settings_store.load()
 
     def test_corrupt_preferences_are_not_overwritten(self):
         store = SettingsStore(self.history.directory)

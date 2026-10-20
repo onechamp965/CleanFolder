@@ -25,7 +25,7 @@ def colors(dark: bool) -> dict[str, str]:
 
 def category_color(category: str, dark: bool) -> QColor:
     accents = {
-        "Word": "#568AE8", "PowerPoint": "#C48050", "Excel": "#419F7D",
+        "Word": "#568AE8", "Hangul": "#429DB7", "PowerPoint": "#C48050", "Excel": "#419F7D",
         "PDF": "#D56874", "Images": "#8D7AD6", "Videos": "#A57DC3",
         "Audio": "#BD78A4", "Archives": "#6A9AAB", "Installers": "#C38B42",
         "Code": "#5E9BA1", "Text": "#7C8BA3", "Others": "#8591A4",

@@ -68,6 +68,24 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.window.undo_button.isEnabled())
         self.assertFalse(self.window.trash_button.isEnabled())
 
+    def test_hangul_preview_and_settings_use_the_shared_category(self):
+        (self.root / "보고서.hwp").write_text("report")
+        (self.root / "계획서.HWPX").write_text("plan")
+        self.load_folder()
+        self.assertEqual(self.window.preview_table.rowCount(), 2)
+        for row in range(2):
+            self.assertTrue(self.window.preview_table.item(row, 3).text().startswith("Hangul/"))
+        page = self.window.settings_page
+        self.assertEqual(page.folder_fields["Hangul"].text(), "Hangul")
+        self.assertIn(".hwpx", page.extension_fields["Hangul"].text())
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        self.assertTrue((self.root / "Hangul/보고서.hwp").exists())
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.window.undo_button.click()
+        self.wait_until_idle()
+        self.assertTrue((self.root / "보고서.hwp").exists())
+
     def test_unchecked_file_stays_in_place_and_is_not_in_history(self):
         (self.root / "keep.pdf").write_text("keep")
         (self.root / "move.png").write_text("photo")
