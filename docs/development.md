@@ -1,0 +1,43 @@
+# 소스 실행과 테스트
+
+Python 3.10 이상이 필요합니다. 아래 명령은 저장소 최상위 폴더(`pyproject.toml`이 있는 위치)에서 실행합니다.
+
+## 소스로 실행
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+python -m cleanfolder
+```
+
+화면 없이 미리보기만 확인할 수도 있습니다.
+
+```bash
+python -m cleanfolder --preview ~/Downloads
+```
+
+GUI는 PySide6를 사용합니다. 공통 Core는 PySide6·AI·MCP SDK에 의존하지 않습니다. MCP를 사용하려면 [MCP 안내](mcp.md)에 따라 선택 의존성을 설치하세요.
+
+## 테스트
+
+```bash
+python -m pip install -e '.[mcp]'
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
+```
+
+Core 안전 정책·설정·한글 문서 분류, MCP 경로 제한·승인·만료·stdio 통신, GUI 정리·파일 선택·휴지통·복구와 GUI↔MCP 상호 복구를 검사합니다. MCP SDK가 없으면 stdio 통합 테스트는 건너뜁니다.
+
+## 파일 처리 기준
+
+- 선택한 폴더 바로 아래의 일반 파일만 처리합니다. 기존 폴더·앱 번들·숨김 파일·심볼릭 링크는 제외합니다.
+- 기본 정리는 새 분류 폴더를 만듭니다. GUI에서 재사용을 켜도 기록으로 확인된 앱 생성 폴더만 재사용합니다. MCP 정리는 항상 새 폴더를 만듭니다.
+- 기존 파일을 덮어쓰지 않습니다. 복구는 기록된 파일만 대상으로 하며, 해당 작업이 만든 빈 폴더만 제거합니다.
+- 미리보기 이후 파일·대상 폴더·분류 설정이 바뀌면 다시 미리보기 해야 합니다. 이후 추가된 파일은 다음 정리 대상입니다.
+- 하드 링크를 지원하는 로컬 파일시스템이 필요합니다. 미지원 볼륨에서는 이동하지 않고 오류를 알립니다.
+- 미리보기의 체크 해제는 현재 폴더에서 유지되며 앱 재실행·폴더 변경 시 초기화됩니다. 계속 제외할 파일은 설정에 제외 규칙으로 저장하세요.
+- 휴지통 이동은 GUI에서만 제공합니다. 휴지통으로 보낸 파일은 운영체제 휴지통에서 복원하며 정리 복구 대상에서는 제외합니다.
+
+## 관련 문서
+
+[구조와 설계](architecture.md) · [MCP 변경 단위](mcp-changes.md) · [빌드와 배포](distribution.md) · [README](../README.md)

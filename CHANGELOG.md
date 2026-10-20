@@ -2,11 +2,22 @@
 
 로컬에 보관한 버전별 소스와 배포 결과를 기준으로 정리했습니다. 아래 버전이 모두 GitHub Releases에 공개된 것은 아닙니다.
 
-## 미배포 — 한글 문서 분류
+## 1.5.0 — MCP 지원과 한글 문서 분류
 
+### 추가
+- GUI와 공통 Core를 사용하는 stdio MCP 서버와 선택 설치 의존성을 추가했습니다.
+- `scan_folder`, `preview_organization`, `organize_files`, `undo_last_operation` 네 개 Tool을 제공합니다. MCP에서 삭제·휴지통 이동은 제공하지 않습니다.
+- 정확한 허용 폴더 검증, 사용자 승인 선언, 5분 유효한 일회성 미리보기 ID, 승인한 최신 작업 ID 확인을 적용했습니다.
+- GUI와 MCP가 기본 작업 기록·잠금을 공유하고 서로의 정리를 복구합니다.
 - `.hwp`·`.hwpx`를 GUI와 MCP 공통 `Hangul` 분류에 추가했습니다.
 - 이전 설정에 새 분류를 보완하며 기존 폴더 이름·확장자 지정·제외 규칙을 유지합니다.
 - 기존 `Others` 폴더 내부 파일은 자동으로 재정리하지 않습니다.
+
+### 검증·배포
+- 로컬 macOS에서 자동 테스트 116개를 통과했습니다. GUI는 offscreen으로 검사하며, 실제 stdio 통합 호출과 GUI↔MCP 상호 복구를 포함합니다.
+- Apple Silicon·macOS 14 이상용 DMG와 앱 ZIP을 제공합니다. MCP는 소스로 별도 실행합니다.
+- Apple 개발자 인증서 서명·공증과 Windows·Intel Mac의 실사용 검증은 완료하지 않았습니다.
+- [v1.5.0 상세 안내](docs/releases/v1.5.0.md)
 
 ## 1.4.0 — 정리하지 않을 파일 직접 선택
 
