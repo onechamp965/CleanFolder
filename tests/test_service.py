@@ -20,6 +20,7 @@ class OrganizerTests(unittest.TestCase):
         self.root.mkdir()
         self.store = HistoryStore(self.base / "history")
         self.organizer = Organizer(self.store)
+        self.organizer.apply_settings(replace(self.organizer.settings, folder_mode="new"))
 
     def file(self, name, content="sample"):
         path = self.root / name

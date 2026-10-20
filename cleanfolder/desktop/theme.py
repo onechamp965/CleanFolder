@@ -75,6 +75,8 @@ def stylesheet(palette: dict[str, str]) -> str:
         QPushButton#danger:disabled { color: %(muted)s; }
         QTabWidget::pane { border: none; background: transparent; }
         QWidget#settingsContent, QScrollArea#settingsScroll { background: %(canvas)s; border: none; }
+        QScrollArea#summaryScroll { background: %(surface)s; border: none; }
+        QLabel#destinationSummary { background: %(surface)s; color: %(text)s; font-size: 14px; padding: 12px 0; }
         QTabBar::tab { background: transparent; color: %(secondary)s; padding: 10px 17px; border-bottom: 2px solid transparent; }
         QTabBar::tab:selected { color: %(accent)s; border-bottom-color: %(primary)s; }
         QLineEdit, QPlainTextEdit, QComboBox { background: %(raised)s; color: %(text)s; border: 1px solid %(border)s; border-radius: 7px; padding: 8px; selection-background-color: %(selection)s; }

@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QFontDatabase, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -20,7 +20,7 @@ from ..core.settings import Settings, SettingsError
 from ..platforms.environment import trash_location
 from .settings_page import SettingsPage
 from .theme import category_color, colors, stylesheet
-from .widgets import CategoryDelegate, EmptyState, StatCard, label
+from .widgets import CategoryDelegate, EmptyState, FileSelectionTable, StatCard, label
 
 
 class Task(QThread):
@@ -38,8 +38,8 @@ class Task(QThread):
             self.failed.emit(str(error))
 
 
-def make_table(headers: list[str]) -> QTableWidget:
-    table = QTableWidget(0, len(headers))
+def make_table(headers: list[str], *, file_selection: bool = False) -> QTableWidget:
+    table = FileSelectionTable(0, len(headers)) if file_selection else QTableWidget(0, len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -77,6 +77,8 @@ class MainWindow(QMainWindow):
         self.excluded_names: set[str] = set()
         self.installer_items = []
         self.latest_job = None
+        self.completion_root: Path | None = None
+        self.completion_operation_id: str | None = None
         self.task: Task | None = None
         self.setWindowTitle("CleanFolder")
         self.setWindowIcon(app_icon())
@@ -200,12 +202,19 @@ class MainWindow(QMainWindow):
         self.refresh_button = QPushButton("다시 미리보기")
         self.refresh_button.setObjectName("quiet")
         self.refresh_button.clicked.connect(self.refresh)
+        self.details_button = QPushButton("파일 선택")
+        self.details_button.setToolTip("파일별 목록에서 행이나 체크박스를 눌러 정리할 파일을 선택·제외합니다.")
+        self.details_button.setCheckable(True)
+        self.details_button.setChecked(self.organizer.settings.view_mode == "detailed")
+        self.details_button.setAccessibleName("파일별 상세 보기 전환")
+        self.details_button.clicked.connect(self.change_preview_mode)
+        list_header.addWidget(self.details_button)
         list_header.addWidget(self.refresh_button)
         preview_layout.addLayout(list_header)
         self.selection_bar = QWidget()
         selection_row = QHBoxLayout(self.selection_bar)
         selection_row.setContentsMargins(18, 0, 14, 8)
-        selection_hint = label("남겨둘 파일은 체크를 해제하세요.", "secondary")
+        selection_hint = label("행이나 체크박스를 눌러 선택·제외하세요. Space 키로도 전환할 수 있습니다.", "secondary")
         selection_hint.setToolTip("같은 폴더에서 다시 미리보기 해도 선택을 유지합니다. 폴더를 바꾸거나 앱을 다시 열면 초기화됩니다. 계속 제외할 파일은 설정의 제외 항목에 등록하세요.")
         selection_hint.setWordWrap(True)
         selection_row.addWidget(selection_hint, 1)
@@ -218,7 +227,7 @@ class MainWindow(QMainWindow):
         self.exclude_all_button.clicked.connect(lambda: self.select_all_files(False))
         self.selection_bar.hide()
         preview_layout.addWidget(self.selection_bar)
-        self.preview_table = make_table(["파일 이름", "크기", "분류", "이동할 위치"])
+        self.preview_table = make_table(["파일 이름", "크기", "분류", "이동할 위치"], file_selection=True)
         self.preview_table.setAccessibleName("정리할 파일 선택 목록")
         self.preview_table.itemChanged.connect(self.change_file_selection)
         self.preview_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -235,6 +244,35 @@ class MainWindow(QMainWindow):
                                         "folder", self.choose_folder)
         self.preview_stack.addWidget(self.preview_table)
         self.preview_stack.addWidget(self.empty_preview)
+        self.overview = QWidget()
+        overview_layout = QVBoxLayout(self.overview)
+        overview_layout.setContentsMargins(24, 22, 24, 16)
+        overview_layout.setSpacing(14)
+        self.overview_title = label("이동할 파일을 확인하세요", "emptyTitle")
+        self.overview_title.setWordWrap(True)
+        overview_layout.addWidget(self.overview_title)
+        self.overview_note = label("현재 선택된 파일의 이동 요약입니다. 위의 파일 선택 버튼에서 개별 파일을 선택·제외할 수 있습니다.", "secondary")
+        self.overview_note.setWordWrap(True)
+        overview_layout.addWidget(self.overview_note)
+        destination_area = QScrollArea()
+        destination_area.setObjectName("summaryScroll")
+        destination_area.setWidgetResizable(True)
+        destination_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.destination_summary = label("", "destinationSummary")
+        self.destination_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.destination_summary.setWordWrap(True)
+        self.destination_summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.destination_summary.setAccessibleName("이동할 폴더별 파일 수")
+        destination_area.setWidget(self.destination_summary)
+        overview_layout.addWidget(destination_area, 1)
+        self.repeat_note = label("", "muted")
+        self.repeat_note.setWordWrap(True)
+        overview_layout.addWidget(self.repeat_note)
+        self.repeat_button = QPushButton("이 폴더로 계속 정리")
+        self.repeat_button.setToolTip("마지막 폴더를 다시 열고 앱이 만든 분류 폴더를 재사용합니다. 파일은 자동으로 이동하지 않습니다.")
+        self.repeat_button.clicked.connect(self.enable_repeat)
+        overview_layout.addWidget(self.repeat_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.preview_stack.addWidget(self.overview)
         self.preview_stack.setCurrentWidget(self.empty_preview)
         preview_layout.addWidget(self.preview_stack, 1)
         self.tabs.addTab(preview_page, "파일 정리")
@@ -285,6 +323,20 @@ class MainWindow(QMainWindow):
         self.settings_page.saveRequested.connect(self.apply_preferences)
         self.tabs.addTab(self.settings_page, "설정")
         layout.addWidget(self.tabs, 1)
+
+        self.completion_card = QFrame()
+        self.completion_card.setObjectName("card")
+        completion_layout = QHBoxLayout(self.completion_card)
+        completion_layout.setContentsMargins(18, 12, 18, 12)
+        self.completion_label = label("", "secondary")
+        self.completion_label.setWordWrap(True)
+        completion_layout.addWidget(self.completion_label, 1)
+        self.completion_undo_button = QPushButton("방금 정리 되돌리기")
+        self.completion_undo_button.setObjectName("quiet")
+        self.completion_undo_button.clicked.connect(self.undo_completed)
+        completion_layout.addWidget(self.completion_undo_button)
+        self.completion_card.hide()
+        layout.addWidget(self.completion_card)
 
         self.footer = QWidget()
         actions = QHBoxLayout(self.footer)
@@ -341,6 +393,7 @@ class MainWindow(QMainWindow):
         self.statusBar().hide()
         QApplication.instance().paletteChanged.connect(self.apply_theme)
         self.apply_theme()
+        self.update_preview_mode()
         self.update_buttons()
         if self.organizer.settings.startup_folder() is not None:
             QTimer.singleShot(0, self.load_startup_folder)
@@ -419,7 +472,10 @@ class MainWindow(QMainWindow):
         self.organize_button.setDefault(index == 0)
         for widget in (self.folder_card, self.stats_widget, self.footer):
             widget.setVisible(index != 3)
+        self.completion_card.setVisible(index == 0 and bool(self.completion_label.text()))
+        self.update_preview_mode()
         self.update_icons()
+        self.update_buttons()
 
     def changeEvent(self, event: QEvent):
         super().changeEvent(event)
@@ -438,9 +494,17 @@ class MainWindow(QMainWindow):
         self.organize_button.setEnabled(not busy and bool(selected))
         self.organize_button.setText(f"선택한 {len(selected)}개 정리" if selected else "정리하기")
         self.preview_table.setEnabled(not busy)
+        self.details_button.setEnabled(not busy and self.preview is not None and bool(self.preview.files))
+        self.repeat_button.setEnabled(not busy and self.folder is not None and not self.settings_page.dirty)
         for button in (self.select_all_button, self.exclude_all_button):
             button.setEnabled(not busy and self.preview is not None and bool(self.preview.files))
         self.undo_button.setEnabled(not busy and self.latest_job is not None)
+        can_undo_completion = (
+            self.completion_root == self.folder and self.completion_operation_id is not None
+            and self.latest_job is not None and self.latest_job["id"] == self.completion_operation_id
+        )
+        self.completion_undo_button.setEnabled(not busy and can_undo_completion)
+        self.completion_undo_button.setVisible(can_undo_completion)
         self.trash_button.setEnabled(not busy and bool(self.selected_installers()))
         self.installers_table.setEnabled(not busy)
         self.progress.setVisible(busy)
@@ -504,8 +568,61 @@ class MainWindow(QMainWindow):
         self.protected_stat.value.setText(f"{self.preview.skipped + excluded}개")
         self.file_badge.setText(f"{len(selected)}/{len(self.preview.files)}개 선택")
         self.summary.setText(f"정리할 파일 {len(selected)}개 · 직접 제외 {excluded}개 · 보호·규칙 제외 {self.preview.skipped}개")
-        self.selection_bar.setVisible(bool(self.preview.files))
+        self.update_preview_mode()
         self.update_buttons()
+
+    def update_preview_mode(self):
+        detailed = self.details_button.isChecked()
+        self.details_button.setText("간편 보기" if detailed else "파일 선택")
+        has_files = self.preview is not None and bool(self.preview.files)
+        self.selection_bar.setVisible(has_files and detailed)
+        self.stats_widget.setVisible(self.tabs.currentIndex() != 3 and detailed)
+        if not has_files:
+            self.preview_stack.setCurrentWidget(self.empty_preview)
+            return
+        selected = self.selected_files()
+        self.overview_title.setText(f"새로 정리할 파일 {len(selected)}개" if selected else "이번에 이동할 파일이 없습니다")
+        destinations = {}
+        for item in selected:
+            destinations[item.folder] = destinations.get(item.folder, 0) + 1
+        self.destination_summary.setText("\n\n".join(
+            f"{folder}  ·  {count}개  ·  {'앱 생성 폴더 재사용' if folder in self.preview.existing_folders else '새 폴더'}"
+            for folder, count in destinations.items()
+        ) or "파일 선택 버튼을 눌러 정리할 파일을 다시 선택해 주세요.")
+        reuse = self.organizer.settings.folder_mode == "managed"
+        startup = self.organizer.settings.startup_mode
+        repeat = reuse and startup == "last"
+        self.repeat_note.setText(
+            "다음 실행에도 마지막 폴더와 저장된 규칙을 불러옵니다. 이동 전에 요약을 다시 확인해 주세요."
+            if repeat else "설정의 분류·제외 규칙을 사용합니다. 반복 정리를 켜면 마지막 폴더와 앱 생성 분류 폴더를 다시 사용합니다."
+        )
+        self.repeat_button.setVisible(not repeat)
+        self.preview_stack.setCurrentWidget(self.preview_table if detailed else self.overview)
+
+    def change_preview_mode(self):
+        mode = "detailed" if self.details_button.isChecked() else "simple"
+        try:
+            self.organizer.apply_settings(replace(self.organizer.settings, view_mode=mode))
+        except (SettingsError, SafetyError, OSError) as error:
+            self.details_button.setChecked(self.organizer.settings.view_mode == "detailed")
+            QMessageBox.warning(self, "표시 방식을 저장하지 못했어요", str(error))
+        else:
+            if not self.settings_page.dirty:
+                self.settings_page.load(self.organizer.settings)
+        self.update_preview_mode()
+
+    def enable_repeat(self):
+        if self.folder is None or self.task is not None or self.settings_page.dirty:
+            return
+        self.apply_preferences(replace(
+            self.organizer.settings, folder_mode="managed", startup_mode="last", last_folder=str(self.folder),
+        ))
+
+    def clear_completion(self):
+        self.completion_operation_id = None
+        self.completion_root = None
+        self.completion_label.clear()
+        self.completion_card.hide()
 
     def choose_folder(self):
         if self.task is not None:
@@ -518,6 +635,7 @@ class MainWindow(QMainWindow):
         if self.task is not None:
             return
         if self.folder != path.resolve():
+            self.clear_completion()
             self.selection_root = None
             self.excluded_names.clear()
         self.folder = path.resolve()
@@ -551,12 +669,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "설정을 저장하지 못했어요", str(error))
             return
         self.settings_page.load(self.organizer.settings)
+        self.details_button.setChecked(settings.view_mode == "detailed")
         self.apply_theme()
         self.safety_note.setText(
             "CleanFolder가 만든 분류 폴더만 재사용합니다. 다른 폴더는 보호됩니다."
             if settings.folder_mode == "managed" else "기존 폴더와 폴더 안의 파일은 그대로 유지됩니다."
         )
         self.preview = None
+        self.update_preview_mode()
         self.update_buttons()
         self.refresh()
         self.statusBar().showMessage("설정을 저장했습니다. 시작 폴더는 다음 실행부터 적용됩니다.", 7000)
@@ -593,6 +713,7 @@ class MainWindow(QMainWindow):
         task.deleteLater()
         self.update_buttons()
         if self._task_error is not None:
+            self.clear_completion()
             self.preview = None
             self.selection_bar.hide()
             self.file_badge.setText("0개")
@@ -644,9 +765,9 @@ class MainWindow(QMainWindow):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
                 if column == 0:
-                    cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                    cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsUserCheckable)
                     cell.setCheckState(Qt.CheckState.Checked)
-                    cell.setToolTip(f"{item.name}\n체크를 해제하면 원래 위치에 남겨둡니다.")
+                    cell.setToolTip(f"{item.name}\n행이나 체크박스를 누르면 선택 상태가 바뀝니다. 체크를 해제하면 원래 위치에 남겨둡니다.")
                     cell.setIcon(self.file_icon(item.category))
                 elif column == 1:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -673,6 +794,11 @@ class MainWindow(QMainWindow):
         self.installers_table.blockSignals(False)
         self.installer_stack.setCurrentWidget(self.installers_table if self.installer_items else self.empty_installers)
         self.latest_job = next((job for job in jobs if job["state"] == "active"), None)
+        if self.completion_operation_id is not None and (
+            self.completion_root != self.folder or self.latest_job is None
+            or self.latest_job["id"] != self.completion_operation_id
+        ):
+            self.clear_completion()
         self.history_table.setRowCount(len(jobs))
         for row, job in enumerate(jobs):
             pending = sum(action["state"] not in ("restored", "trashed") for action in job["actions"])
@@ -693,6 +819,14 @@ class MainWindow(QMainWindow):
         self.start_task(lambda: self.organizer.organize(preview),
                         lambda result: self.report(result, "정리"), "파일을 정리하고 있습니다…")
 
+    def undo_completed(self):
+        if (self.task is not None or self.folder != self.completion_root
+                or self.completion_operation_id is None):
+            return
+        folder, operation_id = self.completion_root, self.completion_operation_id
+        self.start_task(lambda: self.organizer.undo(folder, expected_operation_id=operation_id),
+                        lambda result: self.report(result, "복구"), "방금 정리한 파일을 원래 위치로 돌리고 있습니다…")
+
     def undo(self):
         if self.folder is None or self.latest_job is None or self.task is not None:
             return
@@ -701,7 +835,8 @@ class MainWindow(QMainWindow):
                                      QMessageBox.StandardButton.Cancel)
         if reply == QMessageBox.StandardButton.Yes:
             folder = self.folder
-            self.start_task(lambda: self.organizer.undo(folder),
+            operation_id = self.latest_job["id"]
+            self.start_task(lambda: self.organizer.undo(folder, expected_operation_id=operation_id),
                             lambda result: self.report(result, "복구"), "파일을 원래 위치로 돌리고 있습니다…")
 
     def trash_selected(self):
@@ -718,6 +853,12 @@ class MainWindow(QMainWindow):
 
     def report(self, result: Result, verb: str):
         message = f"파일 {result.completed}개 {verb} 완료"
+        self.clear_completion()
+        self.completion_label.setText(message if not result.issues else f"파일 {result.completed}개 {verb} · 처리하지 못한 항목 {len(result.issues)}개")
+        self.completion_root = self.folder
+        if result.operation_id is not None and (verb == "정리" or (verb == "복구" and result.issues)):
+            self.completion_operation_id = result.operation_id
+        self.completion_card.setVisible(self.tabs.currentIndex() == 0)
         if result.issues:
             dialog = QMessageBox(QMessageBox.Icon.Warning, "일부 파일 확인 필요",
                                  f"{message}\n처리하지 못한 항목 {len(result.issues)}개가 있습니다.", parent=self)

@@ -44,6 +44,63 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(reopened.settings.startup_folder(), self.root)
         self.assertEqual(reopened.jobs(), [])
 
+    def test_new_install_defaults_to_simple_repeat_workflow(self):
+        settings = Settings()
+        self.assertEqual(settings.view_mode, "simple")
+        self.assertEqual(settings.folder_mode, "managed")
+        self.assertEqual(settings.startup_mode, "last")
+        self.assertIsNone(settings.startup_folder())
+
+    def test_v150_settings_keep_explicit_choices_and_open_in_detail(self):
+        settings = replace(Settings(), folder_mode="new", startup_mode="empty", theme="dark",
+                           excluded_names=("keep-*",), last_folder=str(self.root))
+        data = asdict(settings)
+        data.pop("view_mode")
+        path = self.organizer.settings_store.path
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"version": 1, "settings": data}))
+        original = path.read_bytes()
+        loaded = self.organizer.settings_store.load()
+        self.assertEqual(loaded.view_mode, "detailed")
+        self.assertEqual(loaded.folder_mode, "new")
+        self.assertEqual(loaded.startup_mode, "empty")
+        self.assertEqual(loaded.excluded_names, ("keep-*",))
+        self.assertEqual(loaded.theme, "dark")
+        self.assertIsNone(loaded.startup_folder())
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_minimal_legacy_settings_keep_old_defaults(self):
+        path = self.organizer.settings_store.path
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"version": 1, "settings": {"theme": "dark"}}))
+        loaded = self.organizer.settings_store.load()
+        self.assertEqual((loaded.folder_mode, loaded.startup_mode, loaded.view_mode), ("new", "empty", "detailed"))
+
+    def test_view_mode_persists_without_changing_sorting_key(self):
+        settings = self.organizer.settings
+        self.organizer.apply_settings(replace(settings, view_mode="detailed"))
+        reopened = Organizer(self.history)
+        self.assertEqual(reopened.settings.view_mode, "detailed")
+        self.assertEqual(settings.sorting_key(), reopened.settings.sorting_key())
+        with self.assertRaises(SettingsError):
+            replace(settings, view_mode="unknown").validated()
+
+    def test_view_change_does_not_invalidate_an_existing_plan(self):
+        self.file("report.pdf")
+        preview = self.organizer.preview(self.root)
+        self.organizer.apply_settings(replace(self.organizer.settings, view_mode="detailed"))
+        self.assertEqual(self.organizer.organize(preview).completed, 1)
+
+    def test_display_preference_preserves_v150_settings_shape(self):
+        self.organizer.apply_settings(self.organizer.settings)
+        document = json.loads(self.organizer.settings_store.path.read_text())
+        self.assertEqual(document["version"], 1)
+        self.assertNotIn("view_mode", document["settings"])
+        self.assertEqual(document["view_mode"], "simple")
+        legacy_fields = set(Settings.__dataclass_fields__) - {"view_mode"}
+        self.assertEqual(set(document["settings"]), legacy_fields)
+        self.assertEqual(Organizer(self.history).settings.view_mode, "simple")
+
     def test_atomic_write_failure_keeps_old_preferences(self):
         self.organizer.apply_settings(replace(Settings(), theme="light"))
         with patch("cleanfolder.core.settings.os.replace", side_effect=OSError("disk full")):
@@ -57,6 +114,7 @@ class SettingsTests(unittest.TestCase):
         data = asdict(settings)
         data["folder_names"].pop("Hangul")
         data["extensions"].pop("Hangul")
+        data.pop("view_mode")
         path = self.organizer.settings_store.path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"version": 1, "settings": data}), encoding="utf-8")

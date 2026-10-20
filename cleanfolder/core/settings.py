@@ -32,21 +32,24 @@ def normalize_extension(extension: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    folder_mode: str = "new"
+    folder_mode: str = "managed"
     folder_names: dict[str, str] = field(default_factory=lambda: {category: category for category in CATEGORIES})
     extensions: dict[str, tuple[str, ...]] = field(default_factory=lambda: dict(CATEGORIES))
     excluded_extensions: tuple[str, ...] = ()
     excluded_names: tuple[str, ...] = ()
-    startup_mode: str = "empty"
+    startup_mode: str = "last"
     default_folder: str = ""
     last_folder: str = ""
     theme: str = "system"
+    view_mode: str = "simple"
 
     def validated(self):
         if self.folder_mode not in ("new", "managed"):
             raise SettingsError("분류 폴더 사용 방식을 확인해 주세요.")
         if self.startup_mode not in ("empty", "default", "last") or self.theme not in ("system", "light", "dark"):
             raise SettingsError("시작 폴더 또는 화면 모드 설정을 확인해 주세요.")
+        if self.view_mode not in ("simple", "detailed"):
+            raise SettingsError("미리보기 표시 방식을 확인해 주세요.")
         if not isinstance(self.folder_names, dict) or set(self.folder_names) != set(CATEGORIES):
             raise SettingsError("분류별 폴더 이름을 모두 지정해 주세요.")
         if not isinstance(self.extensions, dict) or set(self.extensions) != set(CATEGORIES):
@@ -110,7 +113,7 @@ class Settings:
 
     def sorting_key(self) -> str:
         data = asdict(self)
-        for key in ("startup_mode", "default_folder", "last_folder", "theme"):
+        for key in ("startup_mode", "default_folder", "last_folder", "theme", "view_mode"):
             data.pop(key)
         return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -131,6 +134,9 @@ class SettingsStore:
             if document["version"] != 1 or not isinstance(document["settings"], dict):
                 raise ValueError("설정 형식")
             data = dict(document["settings"])
+            data.setdefault("folder_mode", "new")
+            data.setdefault("startup_mode", "empty")
+            data.setdefault("view_mode", document.get("view_mode", "detailed"))
             legacy_categories = set(CATEGORIES) - {"Hangul"}
             folders, extensions = data.get("folder_names"), data.get("extensions")
             if (isinstance(folders, dict) and isinstance(extensions, dict)
@@ -145,12 +151,14 @@ class SettingsStore:
 
     def save(self, settings: Settings) -> Settings:
         settings = settings.validated()
+        data = asdict(settings)
+        view_mode = data.pop("view_mode")
         temporary = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, temporary = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump({"version": 1, "settings": asdict(settings)}, handle, ensure_ascii=False, indent=2)
+                json.dump({"version": 1, "settings": data, "view_mode": view_mode}, handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self.path)

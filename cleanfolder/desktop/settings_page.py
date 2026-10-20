@@ -54,6 +54,14 @@ class SettingsPage(QWidget):
         self.sections.setObjectName("settingsTabs")
         general, general_layout = scroll_page()
 
+        preview_card, preview_layout = card("정리 미리보기", "간편 화면에서는 이동할 폴더별 요약을 표시합니다. 상세 보기에서 파일을 개별 선택할 수 있습니다.")
+        self.view_mode = QComboBox()
+        self.view_mode.addItem("간편 요약", "simple")
+        self.view_mode.addItem("파일별 상세 보기", "detailed")
+        self.view_mode.setAccessibleName("미리보기 표시 방식")
+        preview_layout.addWidget(self.view_mode)
+        general_layout.addWidget(preview_card)
+
         folder_card, folder_layout = card("분류 폴더 사용 방식", "직접 만든 폴더는 보호합니다. 재사용은 작업 기록과 폴더 정보가 일치하는 경우에만 허용합니다.")
         self.folder_mode = QComboBox()
         self.folder_mode.addItem("매번 새 분류 폴더 만들기", "new")
@@ -171,7 +179,7 @@ class SettingsPage(QWidget):
         actions.addWidget(self.save_button)
         layout.addLayout(actions)
         self.startup_mode.currentIndexChanged.connect(self.update_startup_controls)
-        for combo in (self.folder_mode, self.startup_mode, self.appearance):
+        for combo in (self.folder_mode, self.startup_mode, self.appearance, self.view_mode):
             combo.currentIndexChanged.connect(self.mark_dirty)
         for field in (*self.folder_fields.values(), *self.extension_fields.values(), self.default_folder):
             field.textChanged.connect(self.mark_dirty)
@@ -186,6 +194,7 @@ class SettingsPage(QWidget):
         self.folder_mode.setCurrentIndex(self.folder_mode.findData(settings.folder_mode))
         self.startup_mode.setCurrentIndex(self.startup_mode.findData(settings.startup_mode))
         self.appearance.setCurrentIndex(self.appearance.findData(settings.theme))
+        self.view_mode.setCurrentIndex(self.view_mode.findData(settings.view_mode))
         self.default_folder.setText(settings.default_folder)
         self.default_folder.setToolTip(settings.default_folder)
         self.last_folder.setText(f"마지막 사용 폴더: {settings.last_folder}" if settings.last_folder else "아직 선택한 폴더가 없습니다.")
@@ -225,6 +234,7 @@ class SettingsPage(QWidget):
             startup_mode=self.startup_mode.currentData(),
             default_folder=self.default_folder.text(),
             theme=self.appearance.currentData(),
+            view_mode=self.view_mode.currentData(),
             folder_names={category: field.text() for category, field in self.folder_fields.items()},
             extensions={category: parse_entries(field.text()) for category, field in self.extension_fields.items()},
             excluded_extensions=parse_entries(self.excluded_extensions.toPlainText()),

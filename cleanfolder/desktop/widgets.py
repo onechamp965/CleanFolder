@@ -2,7 +2,7 @@ from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QFrame, QLabel, QPushButton, QStyle, QStyledItemDelegate,
-    QStyleOptionViewItem, QVBoxLayout, QWidget,
+    QStyleOptionViewItem, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from .icons import symbol_icon
@@ -56,6 +56,47 @@ class StatCard(QFrame):
         layout.addWidget(label(title, "statLabel"))
         self.value = label("—", "statValue")
         layout.addWidget(self.value)
+
+
+class FileSelectionTable(QTableWidget):
+    def __init__(self, *arguments):
+        super().__init__(*arguments)
+        self._pressed_row = None
+        self._pressed_state = None
+
+    def mousePressEvent(self, event):
+        self._pressed_row = None
+        self._pressed_state = None
+        index = self.indexAt(event.position().toPoint())
+        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton and index.isValid():
+            checkbox = self.item(index.row(), 0)
+            if checkbox is not None and checkbox.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                self._pressed_row = index.row()
+                self._pressed_state = checkbox.checkState()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        row, state = self._pressed_row, self._pressed_state
+        self._pressed_row = None
+        self._pressed_state = None
+        super().mouseReleaseEvent(event)
+        index = self.indexAt(event.position().toPoint())
+        if (self.isEnabled() and event.button() == Qt.MouseButton.LeftButton
+                and index.isValid() and row == index.row()):
+            checkbox = self.item(row, 0)
+            if checkbox is not None and checkbox.checkState() == state:
+                checkbox.setCheckState(Qt.CheckState.Unchecked if state == Qt.CheckState.Checked else Qt.CheckState.Checked)
+
+    def keyPressEvent(self, event):
+        index = self.currentIndex()
+        if self.isEnabled() and event.key() == Qt.Key.Key_Space and index.isValid():
+            checkbox = self.item(index.row(), 0)
+            if checkbox is not None and checkbox.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                if not event.isAutoRepeat():
+                    checkbox.setCheckState(Qt.CheckState.Unchecked if checkbox.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class CategoryDelegate(QStyledItemDelegate):

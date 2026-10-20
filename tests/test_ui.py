@@ -38,6 +38,9 @@ class WindowTests(unittest.TestCase):
         self.root = self.base / "Downloads"
         self.root.mkdir()
         self.organizer = Organizer(HistoryStore(self.base / "history"))
+        self.organizer.apply_settings(replace(
+            self.organizer.settings, folder_mode="new", startup_mode="empty", view_mode="detailed",
+        ))
         self.window = MainWindow(self.organizer)
         self.window.show()
 
@@ -47,9 +50,11 @@ class WindowTests(unittest.TestCase):
         self.application.processEvents()
         self.temporary.cleanup()
 
-    def wait_until_idle(self):
+    def wait_until_idle(self, window=None):
+        window = window or self.window
+        self.application.processEvents()
         deadline = time.monotonic() + 15
-        while self.window.task is not None:
+        while window.task is not None:
             self.application.processEvents()
             if time.monotonic() > deadline:
                 self.fail("화면 작업이 시간 안에 끝나지 않았습니다.")
@@ -61,6 +66,226 @@ class WindowTests(unittest.TestCase):
         self.window.folder_text.setText(str(self.root))
         self.window.refresh()
         self.wait_until_idle()
+
+    def use_simple_repeat(self):
+        self.window.apply_preferences(replace(
+            self.organizer.settings, view_mode="simple", folder_mode="managed", startup_mode="last",
+        ))
+        self.wait_until_idle()
+
+    def test_simple_mode_shows_exact_destinations_and_preserves_detail_selection(self):
+        (self.root / "report.pdf").write_text("report")
+        (self.root / "photo.png").write_text("photo")
+        self.use_simple_repeat()
+        self.load_folder()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.overview)
+        self.assertFalse(self.window.stats_widget.isVisible())
+        self.assertFalse(self.window.selection_bar.isVisible())
+        self.assertIn("PDF  ·  1개", self.window.destination_summary.text())
+        self.assertIn("Images  ·  1개", self.window.destination_summary.text())
+        self.assertTrue((self.root / "report.pdf").exists())
+        preview = self.window.preview
+        self.window.details_button.click()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.preview_table)
+        self.assertTrue(self.window.stats_widget.isVisible())
+        self.window.preview_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+        self.window.details_button.click()
+        self.assertIs(self.window.preview, preview)
+        self.assertEqual(self.window.overview_title.text(), "새로 정리할 파일 1개")
+        self.assertNotIn("Images", self.window.destination_summary.text())
+        self.assertEqual(Organizer(self.organizer.history).settings.view_mode, "simple")
+
+    def test_simple_mode_survives_page_navigation_and_empty_selection(self):
+        (self.root / "report.pdf").write_text("report")
+        self.use_simple_repeat()
+        self.load_folder()
+        self.window.nav_buttons[1].click()
+        self.window.nav_buttons[0].click()
+        self.assertFalse(self.window.stats_widget.isVisible())
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.overview)
+        self.window.details_button.click()
+        self.window.exclude_all_button.click()
+        self.window.details_button.click()
+        self.assertFalse(self.window.organize_button.isEnabled())
+        self.assertEqual(self.window.overview_title.text(), "이번에 이동할 파일이 없습니다")
+        self.assertEqual(self.organizer.jobs(), [])
+
+    def test_view_mode_save_failure_keeps_previous_mode_and_plan(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        preview = self.window.preview
+        with patch.object(self.organizer.settings_store, "save", side_effect=SettingsError("disk full")):
+            with patch.object(QMessageBox, "warning") as warning:
+                self.window.details_button.click()
+                warning.assert_called_once()
+        self.assertTrue(self.window.details_button.isChecked())
+        self.assertIs(self.window.preview, preview)
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.preview_table)
+
+    def test_existing_user_can_enable_repeat_without_losing_rules(self):
+        (self.root / "keep.pdf").write_text("keep")
+        (self.root / "photo.png").write_text("photo")
+        self.window.apply_preferences(replace(self.organizer.settings, view_mode="simple", excluded_names=("keep-*",)))
+        self.wait_until_idle()
+        self.window.select_folder(self.root)
+        self.wait_until_idle()
+        self.assertTrue(self.window.repeat_button.isVisible())
+        self.window.repeat_button.click()
+        self.wait_until_idle()
+        settings = Organizer(self.organizer.history).settings
+        self.assertEqual((settings.folder_mode, settings.startup_mode), ("managed", "last"))
+        self.assertEqual(settings.last_folder, str(self.root))
+        self.assertEqual(settings.excluded_names, ("keep-*",))
+        self.assertFalse(self.window.repeat_button.isVisible())
+        self.assertTrue((self.root / "photo.png").exists())
+
+    def test_restart_previews_previous_folder_without_user_selection_or_automatic_moves(self):
+        (self.root / "first.png").write_text("first")
+        self.use_simple_repeat()
+        self.window.select_folder(self.root)
+        self.wait_until_idle()
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        (self.root / "second.png").write_text("second")
+        reopened = MainWindow(Organizer(self.organizer.history))
+        try:
+            reopened.show()
+            self.wait_until_idle(reopened)
+            self.assertEqual(reopened.folder, self.root)
+            self.assertIs(reopened.preview_stack.currentWidget(), reopened.overview)
+            self.assertEqual([item.name for item in reopened.selected_files()], ["second.png"])
+            self.assertIn("Images  ·  1개  ·  앱 생성 폴더 재사용", reopened.destination_summary.text())
+            self.assertTrue((self.root / "second.png").exists())
+            reopened.organize_button.click()
+            self.wait_until_idle(reopened)
+            self.assertTrue((self.root / "Images/second.png").exists())
+            self.assertFalse((self.root / "Images (1)").exists())
+        finally:
+            self.wait_until_idle(reopened)
+            reopened.close()
+
+    def test_simple_summary_uses_collision_resolved_folder_without_touching_user_folder(self):
+        (self.root / "PDF").mkdir()
+        (self.root / "PDF/keep.pdf").write_text("keep")
+        (self.root / "report.pdf").write_text("report")
+        self.use_simple_repeat()
+        self.load_folder()
+        self.assertIn("PDF (1)", self.window.destination_summary.text())
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        self.assertEqual((self.root / "PDF/keep.pdf").read_text(), "keep")
+        self.assertTrue((self.root / "PDF (1)/report.pdf").exists())
+
+    def test_completion_button_restores_exact_operation_without_extra_dialog(self):
+        (self.root / "report.pdf").write_text("report")
+        self.use_simple_repeat()
+        self.load_folder()
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        operation_id = self.organizer.latest(self.root)["id"]
+        self.assertTrue(self.window.completion_card.isVisible())
+        self.assertTrue(self.window.completion_undo_button.isEnabled())
+        self.assertEqual(self.window.completion_operation_id, operation_id)
+        with patch.object(QMessageBox, "question") as question:
+            self.window.completion_undo_button.click()
+            self.wait_until_idle()
+            question.assert_not_called()
+        self.assertTrue((self.root / "report.pdf").exists())
+        self.assertFalse((self.root / "PDF").exists())
+        self.assertIn("복구 완료", self.window.completion_label.text())
+        self.assertFalse(self.window.completion_undo_button.isVisible())
+        self.assertTrue(self.window.completion_card.isVisible())
+
+    def test_completion_cannot_undo_newer_external_operation(self):
+        (self.root / "first.pdf").write_text("first")
+        self.load_folder()
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        (self.root / "second.pdf").write_text("second")
+        external = Organizer(self.organizer.history)
+        result = external.organize(external.preview(self.root))
+        with patch.object(QMessageBox, "warning") as warning:
+            self.window.completion_undo_button.click()
+            self.wait_until_idle()
+            warning.assert_called_once()
+        self.assertEqual(external.latest(self.root)["id"], result.operation_id)
+        self.assertTrue((self.root / "PDF/first.pdf").exists())
+        self.assertTrue((self.root / "PDF (1)/second.pdf").exists())
+        self.assertFalse(self.window.completion_card.isVisible())
+
+    def test_completion_is_cleared_when_folder_or_latest_job_changes(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        self.window.nav_buttons[3].click()
+        self.assertFalse(self.window.completion_card.isVisible())
+        self.window.nav_buttons[0].click()
+        self.assertTrue(self.window.completion_card.isVisible())
+        external = Organizer(self.organizer.history)
+        external.undo(self.root)
+        self.window.refresh()
+        self.wait_until_idle()
+        self.assertFalse(self.window.completion_card.isVisible())
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        other = self.base / "Other"
+        other.mkdir()
+        self.window.select_folder(other)
+        self.wait_until_idle()
+        self.assertIsNone(self.window.completion_operation_id)
+        self.assertFalse(self.window.completion_card.isVisible())
+
+    def test_busy_state_disables_view_switch_repeat_and_immediate_undo(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        self.window.organize_button.click()
+        self.assertFalse(self.window.details_button.isEnabled())
+        self.assertFalse(self.window.repeat_button.isEnabled())
+        self.assertFalse(self.window.completion_undo_button.isEnabled())
+        self.wait_until_idle()
+
+    def test_repeat_shortcut_does_not_discard_unsaved_settings(self):
+        (self.root / "report.pdf").write_text("report")
+        self.window.apply_preferences(replace(self.organizer.settings, view_mode="simple"))
+        self.wait_until_idle()
+        self.load_folder()
+        page = self.window.settings_page
+        self.window.nav_buttons[3].click()
+        page.folder_fields["Images"].setText("사진")
+        self.window.nav_buttons[0].click()
+        self.assertFalse(self.window.repeat_button.isEnabled())
+        self.window.enable_repeat()
+        self.assertTrue(page.dirty)
+        self.assertEqual(page.folder_fields["Images"].text(), "사진")
+        self.assertEqual(self.organizer.settings.folder_mode, "new")
+
+    def test_partial_organization_remains_immediately_recoverable(self):
+        from cleanfolder.core.filesystem import move_exclusive
+
+        (self.root / "first.pdf").write_text("first")
+        (self.root / "second.pdf").write_text("second")
+        self.use_simple_repeat()
+        self.load_folder()
+
+        def move_first_only(source, *arguments):
+            if source.name == "second.pdf":
+                raise OSError("file is busy")
+            return move_exclusive(source, *arguments)
+
+        with patch("cleanfolder.core.service.move_exclusive", side_effect=move_first_only):
+            with patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Ok):
+                self.window.organize_button.click()
+                self.wait_until_idle()
+        self.assertTrue(self.window.completion_undo_button.isEnabled())
+        self.assertIn("처리하지 못한 항목 1개", self.window.completion_label.text())
+        self.assertTrue((self.root / "PDF/first.pdf").exists())
+        self.assertTrue((self.root / "second.pdf").exists())
+        self.window.completion_undo_button.click()
+        self.wait_until_idle()
+        self.assertTrue((self.root / "first.pdf").exists())
+        self.assertEqual((self.root / "second.pdf").read_text(), "second")
+        self.assertIsNone(self.organizer.latest(self.root))
 
     def test_initial_controls(self):
         self.assertTrue(self.window.choose_button.isEnabled())
@@ -121,6 +346,74 @@ class WindowTests(unittest.TestCase):
                          pos=QPoint(rectangle.left() + 20, rectangle.center().y()))
         self.assertEqual(cell.checkState(), Qt.CheckState.Unchecked)
         self.assertFalse(self.window.organize_button.isEnabled())
+
+    def test_clicking_any_file_row_column_toggles_the_checkbox_once(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        checkbox = self.window.preview_table.item(0, 0)
+        for column in range(4):
+            with self.subTest(column=column):
+                rectangle = self.window.preview_table.visualItemRect(self.window.preview_table.item(0, column))
+                QTest.mouseClick(self.window.preview_table.viewport(), Qt.MouseButton.LeftButton, pos=rectangle.center())
+                self.assertEqual(checkbox.checkState(), Qt.CheckState.Unchecked)
+                self.assertFalse(self.window.organize_button.isEnabled())
+                QTest.mouseClick(self.window.preview_table.viewport(), Qt.MouseButton.LeftButton, pos=rectangle.center())
+                self.assertEqual(checkbox.checkState(), Qt.CheckState.Checked)
+                self.assertTrue(self.window.organize_button.isEnabled())
+
+    def test_space_key_toggles_current_file_from_any_column(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        for column in range(4):
+            with self.subTest(column=column):
+                self.window.preview_table.setCurrentCell(0, column)
+                QTest.keyClick(self.window.preview_table, Qt.Key.Key_Space)
+                self.assertEqual(len(self.window.selected_files()), 0)
+                QTest.keyClick(self.window.preview_table, Qt.Key.Key_Space)
+                self.assertEqual(len(self.window.selected_files()), 1)
+
+    def test_right_click_empty_area_and_drag_do_not_change_file_selection(self):
+        (self.root / "first.pdf").write_text("first")
+        (self.root / "second.pdf").write_text("second")
+        self.load_folder()
+        table = self.window.preview_table
+        first = table.visualItemRect(table.item(0, 0)).center()
+        second = table.visualItemRect(table.item(1, 0)).center()
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.RightButton, pos=first)
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, table.viewport().height() - 3))
+        self.assertEqual(len(self.window.selected_files()), 2)
+        QTest.mousePress(table.viewport(), Qt.MouseButton.LeftButton, pos=first)
+        QTest.mouseMove(table.viewport(), second)
+        QTest.mouseRelease(table.viewport(), Qt.MouseButton.LeftButton, pos=second)
+        self.assertEqual(len(self.window.selected_files()), 2)
+
+    def test_simple_file_selection_button_opens_clickable_list_and_preserves_choice(self):
+        (self.root / "keep.pdf").write_text("keep")
+        (self.root / "move.png").write_text("move")
+        self.use_simple_repeat()
+        self.load_folder()
+        self.assertEqual(self.window.details_button.text(), "파일 선택")
+        self.window.details_button.click()
+        rectangle = self.window.preview_table.visualItemRect(self.window.preview_table.item(0, 0))
+        QTest.mouseClick(self.window.preview_table.viewport(), Qt.MouseButton.LeftButton, pos=rectangle.center())
+        self.assertEqual([item.name for item in self.window.selected_files()], ["move.png"])
+        self.window.details_button.click()
+        self.assertIs(self.window.preview_stack.currentWidget(), self.window.overview)
+        self.assertNotIn("PDF", self.window.destination_summary.text())
+        self.window.organize_button.click()
+        self.wait_until_idle()
+        self.assertEqual((self.root / "keep.pdf").read_text(), "keep")
+        self.assertTrue((self.root / "Images/move.png").exists())
+        self.assertEqual([action["name"] for action in self.organizer.latest(self.root)["actions"]], ["move.png"])
+
+    def test_row_click_is_ignored_during_a_background_operation(self):
+        (self.root / "report.pdf").write_text("report")
+        self.load_folder()
+        rectangle = self.window.preview_table.visualItemRect(self.window.preview_table.item(0, 0))
+        self.window.organize_button.click()
+        QTest.mouseClick(self.window.preview_table.viewport(), Qt.MouseButton.LeftButton, pos=rectangle.center())
+        self.wait_until_idle()
+        self.assertTrue((self.root / "PDF/report.pdf").exists())
 
     def test_exclude_all_is_noop_and_select_all_restores_selection(self):
         (self.root / "report.pdf").write_text("report")
