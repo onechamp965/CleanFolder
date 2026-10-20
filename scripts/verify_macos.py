@@ -59,12 +59,18 @@ def verify():
         folder = directory / "Downloads"
         folder.mkdir()
         (folder / "보고서.pdf").write_text("document", encoding="utf-8")
+        (folder / "회의록.hwp").write_text("hangul", encoding="utf-8")
+        (folder / "기획서.hwpx").write_text("hangul xml", encoding="utf-8")
         executable = bundle / "Contents/MacOS/CleanFolder"
         preview = subprocess.run([str(executable), "--preview", str(folder)], cwd=directory,
                                  env=environment, capture_output=True, timeout=30)
         assert preview.returncode == 0, preview.stderr
         assert "Documents/보고서.pdf" in preview.stdout.decode("utf-8"), preview.stdout
+        assert "Hangul/회의록.hwp" in preview.stdout.decode("utf-8"), preview.stdout
+        assert "Hangul/기획서.hwpx" in preview.stdout.decode("utf-8"), preview.stdout
         assert (folder / "보고서.pdf").read_text(encoding="utf-8") == "document"
+        assert (folder / "회의록.hwp").read_text(encoding="utf-8") == "hangul"
+        assert (folder / "기획서.hwpx").read_text(encoding="utf-8") == "hangul xml"
         process = subprocess.Popen([str(executable)], cwd=directory, env=environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
