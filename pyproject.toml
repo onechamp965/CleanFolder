@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cleanfolder-desktop"
+version = "1.4.0"
+description = "A safe, preview-first desktop folder organizer"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.26,<2"]
+
+[project.scripts]
+cleanfolder-mcp = "cleanfolder.mcp_server.server:main"
+
+[project.gui-scripts]
+cleanfolder = "cleanfolder.__main__:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+include = ["cleanfolder*"]
+
+[tool.setuptools.package-data]
+cleanfolder = ["assets/*.svg", "assets/*.png", "assets/*.icns", "assets/*.ico"]
