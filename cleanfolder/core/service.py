@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -49,6 +50,7 @@ class Preview:
     skipped: int
     settings_key: str = ""
     existing_folders: dict[str, list[int]] = field(default_factory=dict)
+    folder_labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -147,6 +149,69 @@ class Organizer:
             ))
         return Preview(root, root_identity, tuple(files), scan.skipped, self.settings.sorting_key(), existing_folders)
 
+    @staticmethod
+    def _safe_project_label(value: str) -> str:
+        if not isinstance(value, str):
+            raise SafetyError("프로젝트 폴더 이름을 확인해 주세요.")
+        cleaned = "".join(
+            " " if character in '/\\:<>"|?*' or ord(character) < 32 else character
+            for character in value
+        ).strip().strip(".")
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        if not cleaned:
+            raise SafetyError("프로젝트 폴더 이름이 비어 있습니다.")
+        while len(cleaned.encode("utf-8")) > 100:
+            cleaned = cleaned[:-1]
+        if not cleaned or cleaned in (".", ".."):
+            raise SafetyError("프로젝트 폴더 이름을 확인해 주세요.")
+        reserved_name = name_key(cleaned.split(".", 1)[0].rstrip(" ."))
+        if reserved_name in {
+            "con", "prn", "aux", "nul", *(f"com{index}" for index in range(1, 10)),
+            *(f"lpt{index}" for index in range(1, 10)),
+        }:
+            cleaned = f"프로젝트 {cleaned}"
+        return cleaned
+
+    def project_preview(self, scan: Scan, assignments: dict[str, str]) -> Preview:
+        """Create a normal undoable preview for approved project assignments."""
+        verify_directory(scan.root, scan.identity)
+        by_name = {item.name: item for item in scan.files}
+        if not assignments:
+            raise SafetyError("프로젝트로 묶을 파일을 선택해 주세요.")
+        if any(name not in by_name for name in assignments):
+            raise SafetyError("분류 제안 이후 파일 목록이 달라졌습니다. 다시 분석해 주세요.")
+
+        labels_by_key: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for label in assignments.values():
+            safe_label = self._safe_project_label(label)
+            key = name_key(safe_label)
+            labels_by_key.setdefault(key, safe_label)
+            counts[key] = counts.get(key, 0) + 1
+        if any(count < 2 for count in counts.values()):
+            raise SafetyError("프로젝트로 묶으려면 각 그룹에 파일이 두 개 이상 있어야 합니다.")
+
+        reserved: set[str] = set()
+        destinations: dict[str, str] = {}
+        folder_labels: dict[str, str] = {}
+        files = []
+        for name, label in assignments.items():
+            item = by_name[name]
+            key = name_key(self._safe_project_label(label))
+            if key not in destinations:
+                safe_label = labels_by_key[key]
+                folder = available_name(scan.root, safe_label, reserved)
+                reserved.add(name_key(folder))
+                destinations[key] = folder
+                folder_labels[folder] = safe_label
+            files.append(PlannedFile(
+                name, "Projects", destinations[key], item.identity, item.size, item.modified, name,
+            ))
+        return Preview(
+            scan.root, scan.identity, tuple(files), scan.skipped,
+            self.settings.sorting_key(), {}, folder_labels,
+        )
+
     def organize(self, preview: Preview) -> Result:
         result = Result()
         with self.history.locked():
@@ -191,7 +256,9 @@ class Organizer:
                         folder.mkdir()
                         job["folders"][item.folder] = identity(folder)
                         job["created_folders"].append(item.folder)
-                    job["folder_labels"][item.folder] = self.settings.folder_names[item.category]
+                    job["folder_labels"][item.folder] = preview.folder_labels.get(
+                        item.folder, self.settings.folder_names.get(item.category, item.category),
+                    )
                     self.history.save(job)
                 verify_directory(folder, job["folders"][item.folder])
                 target = available_name(folder, item.target or item.name)
@@ -214,7 +281,8 @@ class Organizer:
         return result
 
     def jobs(self, root: Path | None = None) -> list[dict]:
-        return [job for job in self.history.jobs() if root is None or job["root"] == str(root)]
+        root_key = str(root.expanduser().resolve()) if root is not None else None
+        return [job for job in self.history.jobs() if root_key is None or job["root"] == root_key]
 
     def latest(self, root: Path) -> dict | None:
         return next((job for job in self.jobs(root) if job["state"] == "active"), None)

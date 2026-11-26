@@ -14,8 +14,9 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..core.filesystem import SafetyError
+from ..core.project_grouping import LocalOllamaGrouper, ProjectCandidate
 from .icons import app_icon, symbol_icon
-from ..core.service import Organizer, Preview, Result
+from ..core.service import Organizer, Preview, Result, Scan
 from ..core.settings import Settings, SettingsError
 from ..platforms.environment import trash_location
 from .settings_page import SettingsPage
@@ -80,6 +81,9 @@ class MainWindow(QMainWindow):
         self.completion_root: Path | None = None
         self.completion_operation_id: str | None = None
         self.task: Task | None = None
+        self._preserve_state_on_task_error = False
+        self.project_scan: Scan | None = None
+        self.project_candidate_names: dict[str, str] = {}
         self.setWindowTitle("CleanFolder")
         self.setWindowIcon(app_icon())
         self.resize(1080, 740)
@@ -110,7 +114,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(label("내 파일 관리", "eyebrow"))
         sidebar_layout.addSpacing(3)
         self.nav_buttons = []
-        for index, text in enumerate(("파일 정리", "설치 파일", "작업 기록")):
+        for index, text in enumerate(("파일 정리", "프로젝트 묶기", "설치 파일", "작업 기록")):
             button = QPushButton(text)
             button.setObjectName("navigation")
             button.setCheckable(True)
@@ -125,7 +129,7 @@ class MainWindow(QMainWindow):
         settings_button.setObjectName("navigation")
         settings_button.setCheckable(True)
         settings_button.setAutoExclusive(True)
-        settings_button.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
+        settings_button.clicked.connect(lambda: self.tabs.setCurrentIndex(4))
         self.nav_buttons.append(settings_button)
         sidebar_layout.addWidget(settings_button)
         self.undo_button = QPushButton("원래대로 돌리기")
@@ -277,6 +281,60 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.preview_stack, 1)
         self.tabs.addTab(preview_page, "파일 정리")
 
+        project_page = QFrame()
+        project_page.setObjectName("card")
+        project_layout = QVBoxLayout(project_page)
+        project_layout.setContentsMargins(20, 18, 20, 18)
+        project_layout.setSpacing(12)
+        project_layout.addWidget(label("관련 파일을 프로젝트별로 묶어 보세요", "sectionTitle"))
+        project_privacy = label(
+            "선택한 폴더 바로 아래의 파일 이름·확장자 분류와 임시 ID만 이 컴퓨터의 Ollama에 전달합니다. "
+            "파일 내용과 전체 경로는 보내지 않으며, 제안을 확인한 뒤 선택한 파일만 이동합니다.",
+            "secondary",
+        )
+        project_privacy.setWordWrap(True)
+        project_layout.addWidget(project_privacy)
+        project_controls = QHBoxLayout()
+        project_controls.addWidget(label("로컬 모델", "secondary"))
+        self.project_model = QLineEdit("qwen3:4b")
+        self.project_model.setPlaceholderText("Ollama 모델 이름")
+        self.project_model.setClearButtonEnabled(True)
+        self.project_model.setMaximumWidth(220)
+        project_controls.addWidget(self.project_model)
+        self.project_suggest_button = QPushButton("로컬 AI로 묶음 제안")
+        self.project_suggest_button.setObjectName("primary")
+        self.project_suggest_button.clicked.connect(self.suggest_project_groups)
+        project_controls.addWidget(self.project_suggest_button)
+        project_controls.addStretch()
+        project_layout.addLayout(project_controls)
+        self.project_status = label(
+            "Ollama가 실행 중이고 모델이 설치되어 있어야 합니다. AI 제안은 파일 이름과 종류만 사용합니다.",
+            "muted",
+        )
+        self.project_status.setWordWrap(True)
+        project_layout.addWidget(self.project_status)
+        self.project_table = make_table(["선택", "파일 이름", "프로젝트 폴더", "제안 이유"])
+        self.project_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self.project_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.project_table.setColumnWidth(0, 54)
+        self.project_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.project_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.project_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.project_table.setAccessibleName("로컬 AI 프로젝트 묶음 제안")
+        self.project_table.itemChanged.connect(self.update_project_apply_button)
+        project_layout.addWidget(self.project_table, 1)
+        project_actions = QHBoxLayout()
+        project_actions.addWidget(label("폴더 이름을 수정할 수 있습니다. 각 프로젝트에는 파일이 2개 이상 필요합니다.", "muted"), 1)
+        self.project_apply_button = QPushButton("선택한 파일 묶기")
+        self.project_apply_button.setObjectName("primary")
+        self.project_apply_button.clicked.connect(self.apply_project_groups)
+        project_actions.addWidget(self.project_apply_button)
+        project_layout.addLayout(project_actions)
+        self.tabs.addTab(project_page, "프로젝트 묶기")
+
         installers_page = QFrame()
         installers_page.setObjectName("card")
         installers_layout = QVBoxLayout(installers_page)
@@ -375,7 +433,7 @@ class MainWindow(QMainWindow):
         self.settings_action = QAction("설정…", self)
         self.settings_action.setShortcut(QKeySequence.StandardKey.Preferences)
         self.settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
-        self.settings_action.triggered.connect(lambda: self.tabs.setCurrentIndex(3))
+        self.settings_action.triggered.connect(lambda: self.tabs.setCurrentIndex(4))
         file_menu.addAction(self.settings_action)
         quit_action = QAction("종료", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -428,7 +486,7 @@ class MainWindow(QMainWindow):
             button.setIcon(symbol_icon(name, button_palette))
             button.setIconSize(QSize(16, 16))
         self.open_action.setIcon(symbol_icon("folder", palette))
-        for index, name in enumerate(("preview", "installers", "history", "settings")):
+        for index, name in enumerate(("preview", "folder", "installers", "history", "settings")):
             navigation_palette = QPalette(palette)
             if self.nav_buttons[index].isChecked():
                 navigation_palette.setColor(QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText, QColor(self.theme["accent"]))
@@ -460,8 +518,9 @@ class MainWindow(QMainWindow):
         return self._file_icons[category]
 
     def change_page(self, index: int):
-        titles = ("파일 정리", "설치 파일", "작업 기록", "설정")
+        titles = ("파일 정리", "프로젝트 묶기", "설치 파일", "작업 기록", "설정")
         descriptions = ("어디로 옮길지 먼저 확인하고, 안심하고 정리하세요.",
+                        "파일 이름과 종류만 로컬 AI로 살펴보고, 관련 파일을 프로젝트별로 묶어 보세요.",
                         "필요 없는 설치 파일을 골라 폴더를 더 가볍게 만드세요.",
                         "정리한 내용을 확인하고, 필요하면 원래대로 돌리세요.",
                         "정리 방식부터 화면까지, 나에게 맞게 설정하세요.")
@@ -470,9 +529,12 @@ class MainWindow(QMainWindow):
         self.nav_buttons[index].setChecked(True)
         self.organize_button.setVisible(index == 0)
         self.organize_button.setDefault(index == 0)
-        for widget in (self.folder_card, self.stats_widget, self.footer):
-            widget.setVisible(index != 3)
-        self.completion_card.setVisible(index == 0 and bool(self.completion_label.text()))
+        self.details_button.setVisible(index == 0)
+        self.refresh_button.setVisible(index == 0)
+        self.folder_card.setVisible(index != 4)
+        self.stats_widget.setVisible(index == 0 and self.details_button.isChecked())
+        self.footer.setVisible(index in (0, 2, 3))
+        self.completion_card.setVisible(index in (0, 1) and bool(self.completion_label.text()))
         self.update_preview_mode()
         self.update_icons()
         self.update_buttons()
@@ -487,7 +549,7 @@ class MainWindow(QMainWindow):
         self.choose_button.setEnabled(not busy)
         self.open_action.setEnabled(not busy)
         self.settings_action.setEnabled(not busy)
-        self.nav_buttons[3].setEnabled(not busy)
+        self.nav_buttons[4].setEnabled(not busy)
         self.settings_page.setEnabled(not busy)
         self.refresh_button.setEnabled(not busy and self.folder is not None)
         selected = self.selected_files()
@@ -507,6 +569,10 @@ class MainWindow(QMainWindow):
         self.completion_undo_button.setVisible(can_undo_completion)
         self.trash_button.setEnabled(not busy and bool(self.selected_installers()))
         self.installers_table.setEnabled(not busy)
+        self.project_suggest_button.setEnabled(not busy and self.folder is not None)
+        self.project_model.setEnabled(not busy)
+        self.project_table.setEnabled(not busy)
+        self.update_project_apply_button()
         self.progress.setVisible(busy)
         self.empty_preview.action.setEnabled(not busy)
         if busy and self.preview is None:
@@ -575,8 +641,8 @@ class MainWindow(QMainWindow):
         detailed = self.details_button.isChecked()
         self.details_button.setText("간편 보기" if detailed else "파일 선택")
         has_files = self.preview is not None and bool(self.preview.files)
-        self.selection_bar.setVisible(has_files and detailed)
-        self.stats_widget.setVisible(self.tabs.currentIndex() != 3 and detailed)
+        self.selection_bar.setVisible(has_files and detailed and self.tabs.currentIndex() == 0)
+        self.stats_widget.setVisible(self.tabs.currentIndex() == 0 and detailed)
         if not has_files:
             self.preview_stack.setCurrentWidget(self.empty_preview)
             return
@@ -638,6 +704,10 @@ class MainWindow(QMainWindow):
             self.clear_completion()
             self.selection_root = None
             self.excluded_names.clear()
+            self.project_scan = None
+            self.project_candidate_names.clear()
+            self.project_table.setRowCount(0)
+            self.project_status.setText("새 폴더를 선택했습니다. 로컬 AI로 파일 묶음을 제안할 수 있습니다.")
         self.folder = path.resolve()
         self.folder_name.setText(self.folder.name or str(self.folder))
         self.folder_text.setText(self.display_path(self.folder))
@@ -688,10 +758,14 @@ class MainWindow(QMainWindow):
         except ValueError:
             return str(path)
 
-    def start_task(self, operation: Callable, finished: Callable, message: str):
+    def start_task(
+        self, operation: Callable, finished: Callable, message: str,
+        *, preserve_state_on_error: bool = False,
+    ):
         if self.task is not None:
             return
         self.summary.setText(message)
+        self._preserve_state_on_task_error = preserve_state_on_error
         task = Task(operation, self)
         self.task = task
         self._task_result = None
@@ -713,6 +787,15 @@ class MainWindow(QMainWindow):
         task.deleteLater()
         self.update_buttons()
         if self._task_error is not None:
+            task_error = self._task_error
+            preserve_state = self._preserve_state_on_task_error
+            self._preserve_state_on_task_error = False
+            self._task_error = None
+            if preserve_state:
+                self.project_status.setText(f"작업을 완료하지 못했습니다: {task_error}")
+                QMessageBox.warning(self, "프로젝트 묶기", task_error)
+                self.update_buttons()
+                return
             self.clear_completion()
             self.preview = None
             self.selection_bar.hide()
@@ -732,8 +815,9 @@ class MainWindow(QMainWindow):
             self.empty_preview.action.show()
             self.update_buttons()
             self.summary.setText("작업을 완료하지 못했습니다. 다시 미리보기로 현재 상태를 확인하세요.")
-            QMessageBox.warning(self, "확인이 필요합니다", self._task_error)
+            QMessageBox.warning(self, "확인이 필요합니다", task_error)
             return
+        self._preserve_state_on_task_error = False
         finished(self._task_result)
 
     def refresh(self):
@@ -744,6 +828,123 @@ class MainWindow(QMainWindow):
         self.start_task(lambda: (
             self.organizer.preview(folder), self.organizer.installers(folder), self.organizer.jobs(folder)
         ), self.show_snapshot, "파일을 확인하고 있습니다…")
+
+    def suggest_project_groups(self):
+        if self.folder is None or self.task is not None:
+            return
+        folder = self.folder
+        model = self.project_model.text().strip() or "qwen3:4b"
+        self.project_status.setText(
+            "선택한 폴더의 최상위 파일 이름과 분류를 로컬 Ollama에 전달해 분석하고 있습니다."
+        )
+        self.start_task(
+            lambda: self._analyze_project_groups(folder, model),
+            self.show_project_groups,
+            "로컬 AI로 프로젝트 파일을 분석하고 있습니다…",
+            preserve_state_on_error=True,
+        )
+
+    def _analyze_project_groups(self, folder: Path, model: str):
+        scan = self.organizer.scan(folder)
+        candidates = tuple(
+            ProjectCandidate(f"F{index:04d}", item.name, item.category)
+            for index, item in enumerate(scan.files, start=1)
+        )
+        result = LocalOllamaGrouper(model).suggest(candidates)
+        return scan, candidates, result
+
+    def show_project_groups(self, suggestion):
+        scan, candidates, result = suggestion
+        self.project_scan = scan
+        self.project_candidate_names = {item.file_id: item.name for item in candidates}
+        assignment_by_id = {}
+        for group in result.groups:
+            for file_id in group.file_ids:
+                assignment_by_id[file_id] = (group.name, group.reason)
+
+        self.project_table.blockSignals(True)
+        self.project_table.setRowCount(len(candidates))
+        grouped_count = 0
+        for row, candidate in enumerate(candidates):
+            assignment = assignment_by_id.get(candidate.file_id)
+            checkbox = QTableWidgetItem()
+            checkbox.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            checkbox.setCheckState(
+                Qt.CheckState.Checked if assignment is not None else Qt.CheckState.Unchecked
+            )
+            checkbox.setData(Qt.ItemDataRole.UserRole, candidate.file_id)
+            self.project_table.setItem(row, 0, checkbox)
+
+            file_name = QTableWidgetItem(candidate.name)
+            file_name.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            file_name.setToolTip("전체 경로와 파일 내용은 AI에 전달하지 않았습니다.")
+            self.project_table.setItem(row, 1, file_name)
+            group_name = QTableWidgetItem(assignment[0] if assignment else "미분류")
+            self.project_table.setItem(row, 2, group_name)
+            reason = QTableWidgetItem(assignment[1] if assignment else "AI가 관련 프로젝트를 확신하지 못해 미분류했습니다.")
+            reason.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            reason.setToolTip(reason.text())
+            self.project_table.setItem(row, 3, reason)
+            grouped_count += int(assignment is not None)
+        self.project_table.blockSignals(False)
+        if result.groups:
+            self.project_status.setText(
+                f"로컬 AI가 {len(result.groups)}개 프로젝트 묶음과 파일 {grouped_count}개를 제안했습니다. "
+                "이름을 수정하거나 체크를 해제한 뒤 적용하세요."
+            )
+        else:
+            self.project_status.setText(
+                "관련성이 분명한 파일 묶음을 찾지 못했습니다. 파일 이름이 구체적인지 확인해 주세요."
+            )
+        self.update_project_apply_button()
+
+    def update_project_apply_button(self, *_):
+        if not hasattr(self, "project_apply_button"):
+            return
+        selected = False
+        for row in range(self.project_table.rowCount()):
+            checkbox = self.project_table.item(row, 0)
+            if checkbox is not None and checkbox.checkState() == Qt.CheckState.Checked:
+                selected = True
+                break
+        self.project_apply_button.setEnabled(
+            self.task is None and self.project_scan is not None and selected
+        )
+
+    def apply_project_groups(self):
+        if self.project_scan is None or self.task is not None:
+            return
+        assignments = {}
+        for row in range(self.project_table.rowCount()):
+            checkbox = self.project_table.item(row, 0)
+            if checkbox is None or checkbox.checkState() != Qt.CheckState.Checked:
+                continue
+            file_id = checkbox.data(Qt.ItemDataRole.UserRole)
+            file_name = self.project_candidate_names.get(file_id)
+            group_item = self.project_table.item(row, 2)
+            group_name = group_item.text().strip() if group_item is not None else ""
+            if not file_name or not group_name or group_name == "미분류":
+                QMessageBox.information(self, "프로젝트 이름 확인", "선택한 파일의 프로젝트 폴더 이름을 입력해 주세요.")
+                return
+            assignments[file_name] = group_name
+        try:
+            preview = self.organizer.project_preview(self.project_scan, assignments)
+        except SafetyError as error:
+            QMessageBox.warning(self, "프로젝트 묶음을 적용할 수 없습니다", str(error))
+            return
+        self.start_task(
+            lambda: self.organizer.organize(preview),
+            self.finish_project_grouping,
+            "선택한 파일을 프로젝트 폴더로 정리하고 있습니다…",
+            preserve_state_on_error=True,
+        )
+
+    def finish_project_grouping(self, result: Result):
+        self.project_scan = None
+        self.project_candidate_names.clear()
+        self.project_table.setRowCount(0)
+        self.project_status.setText("프로젝트별 정리를 마쳤습니다. 작업 기록에서 되돌릴 수 있습니다.")
+        self.report(result, "프로젝트별 정리")
 
     def show_snapshot(self, snapshot):
         self.preview, self.installer_items, jobs = snapshot
@@ -856,9 +1057,11 @@ class MainWindow(QMainWindow):
         self.clear_completion()
         self.completion_label.setText(message if not result.issues else f"파일 {result.completed}개 {verb} · 처리하지 못한 항목 {len(result.issues)}개")
         self.completion_root = self.folder
-        if result.operation_id is not None and (verb == "정리" or (verb == "복구" and result.issues)):
+        if result.operation_id is not None and (
+            verb in ("정리", "프로젝트별 정리") or (verb == "복구" and result.issues)
+        ):
             self.completion_operation_id = result.operation_id
-        self.completion_card.setVisible(self.tabs.currentIndex() == 0)
+        self.completion_card.setVisible(self.tabs.currentIndex() in (0, 1))
         if result.issues:
             dialog = QMessageBox(QMessageBox.Icon.Warning, "일부 파일 확인 필요",
                                  f"{message}\n처리하지 못한 항목 {len(result.issues)}개가 있습니다.", parent=self)
