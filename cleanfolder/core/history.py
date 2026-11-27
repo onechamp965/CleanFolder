@@ -13,13 +13,9 @@ class HistoryWriteError(RuntimeError):
     pass
 
 
-def default_history_directory() -> Path:
-    return data_directory()
-
-
 class HistoryStore:
     def __init__(self, directory: Path | None = None):
-        self.directory = (directory or default_history_directory()).expanduser().resolve()
+        self.directory = (directory if directory is not None else data_directory()).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
 
     @contextmanager

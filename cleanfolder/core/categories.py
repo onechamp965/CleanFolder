@@ -1,6 +1,3 @@
-from pathlib import Path
-
-
 CATEGORIES = {
     "Word": (".doc", ".docx", ".docm", ".dot", ".dotx", ".odt"),
     "Hangul": (".hwp", ".hwpx"),
@@ -16,9 +13,3 @@ CATEGORIES = {
     "Text": (".txt", ".md", ".markdown", ".rtf", ".log", ".rst", ".tex"),
     "Others": (),
 }
-
-EXTENSIONS = {extension: category for category, extensions in CATEGORIES.items() for extension in extensions}
-
-
-def classify(name: str) -> str:
-    return EXTENSIONS.get(Path(name).suffix.lower(), "Others")

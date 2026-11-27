@@ -54,22 +54,33 @@ def build(target: str, baseline: Path | None = None):
     work.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
     environment["PYINSTALLER_CONFIG_DIR"] = str(work / "pyinstaller-cache")
+    signing_identity = environment.get("APPLE_SIGNING_IDENTITY", "").strip()
+    notary_profile = environment.get("APPLE_NOTARY_PROFILE", "").strip()
+    if target == "macos" and notary_profile and not signing_identity:
+        raise SystemExit("공증에는 Developer ID 서명이 필요합니다. APPLE_SIGNING_IDENTITY를 설정해 주세요.")
     command_line_tools = Path("/Library/Developer/CommandLineTools")
     if target == "macos" and not environment.get("DEVELOPER_DIR") and command_line_tools.is_dir():
         environment["DEVELOPER_DIR"] = str(command_line_tools)
         environment["PATH"] = str(command_line_tools / "usr/bin") + os.pathsep + environment.get("PATH", "")
     subprocess.run([sys.executable, "-m", "scripts.build_icons"], cwd=PROJECT, env=environment, check=True)
-    subprocess.run(
-        [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-         "--distpath", str(output), "--workpath", str(work / "pyinstaller"),
-         str(PROJECT / "packaging" / target / "CleanFolder.spec")],
-        cwd=PROJECT, env=environment, check=True,
-    )
+    build_command = [
+        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+        "--distpath", str(output), "--workpath", str(work / "pyinstaller"),
+    ]
+    build_command.append(str(PROJECT / "packaging" / target / "CleanFolder.spec"))
+    subprocess.run(build_command, cwd=PROJECT, env=environment, check=True)
     if target == "macos":
         bundle = output / "CleanFolder.app"
         architecture = "AppleSilicon" if platform.machine() == "arm64" else "Intel"
         name = f"CleanFolder-{__version__}-macOS-{architecture}"
         archive = output / f"{name}.zip"
+        if notary_profile:
+            staging_archive = work / "CleanFolder-notarization.zip"
+            staging_archive.unlink(missing_ok=True)
+            subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(bundle), str(staging_archive)], check=True)
+            subprocess.run(["/usr/bin/xcrun", "notarytool", "submit", str(staging_archive), "--keychain-profile", notary_profile, "--wait"], check=True)
+            subprocess.run(["/usr/bin/xcrun", "stapler", "staple", str(bundle)], check=True)
+            subprocess.run(["/usr/bin/xcrun", "stapler", "validate", str(bundle)], check=True)
         subprocess.run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(bundle), str(archive)], check=True)
         background = work / "installer"
         subprocess.run([sys.executable, "-m", "scripts.build_dmg_background", "--output", str(background)],
@@ -80,6 +91,10 @@ def build(target: str, baseline: Path | None = None):
              "-D", f"app={bundle}", "-D", f"background={background / 'installer-background.png'}",
              "CleanFolder 설치", str(image)], env=environment, check=True,
         )
+        if notary_profile:
+            subprocess.run(["/usr/bin/xcrun", "notarytool", "submit", str(image), "--keychain-profile", notary_profile, "--wait"], check=True)
+            subprocess.run(["/usr/bin/xcrun", "stapler", "staple", str(image)], check=True)
+            subprocess.run(["/usr/bin/xcrun", "stapler", "validate", str(image)], check=True)
         artifacts = [archive, image]
     else:
         bundle = output / "CleanFolder"

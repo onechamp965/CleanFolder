@@ -5,16 +5,18 @@ cleanfolder/
   __main__.py          GUI·미리보기 진입점
   core/                분류, 안전한 이동, 복구, 기록, 설정
   mcp_server/          선택 설치 stdio MCP 서버·도구·미리보기 토큰
-  desktop/             공통 PySide6 화면·위젯·아이콘·테마
+  desktop/             화면 조정·설정 화면·비동기 작업·공통 위젯·아이콘·테마
   platforms/           운영체제별 데이터 경로·안내
   assets/              공통 디자인 원본과 앱 아이콘
 packaging/
   hooks/               사용하지 않는 Qt 플러그인 수집 방지
   macos/               macOS 앱·DMG 설정
   windows/             Windows 실행 파일 설정
-scripts/               아이콘 생성·빌드·용량 보고서
+scripts/               아이콘·설치 배경 생성·통합 배포·검증
 tests/                 핵심 기능·화면·설정·구조 테스트
 ```
+
+`desktop.window`는 화면 간 선택 상태와 작업 흐름을 조정합니다. 백그라운드 작업은 `desktop.tasks`, 재사용 표 설정과 크기 표시는 `desktop.widgets`에 둡니다. 플랫폼별 빌드는 `python -m scripts.release macos` 또는 `python -m scripts.release windows`로 통합했습니다.
 
 ## 의존성 방향
 

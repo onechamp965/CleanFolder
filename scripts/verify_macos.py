@@ -46,6 +46,7 @@ def verify():
         information = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
         assert information["CFBundleIdentifier"] == "com.onechamp965.cleanfolder"
         assert information["CFBundleShortVersionString"] == __version__
+        assert information["NSDownloadsFolderUsageDescription"]
         assert list(bundle.rglob("libqcocoa.dylib"))
         assert list(bundle.rglob("libqoffscreen.dylib"))
         for name in ("QtPdf.framework", "QtQml.framework", "QtQuick.framework", "QtVirtualKeyboard.framework"):
