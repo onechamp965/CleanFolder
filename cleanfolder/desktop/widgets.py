@@ -1,8 +1,9 @@
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QLabel, QPushButton, QStyle, QStyledItemDelegate,
-    QStyleOptionViewItem, QTableWidget, QVBoxLayout, QWidget,
+    QApplication, QAbstractItemView, QFrame, QHeaderView, QLabel, QPushButton,
+    QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+    QVBoxLayout, QWidget,
 )
 
 from .icons import symbol_icon
@@ -97,6 +98,34 @@ class FileSelectionTable(QTableWidget):
                 event.accept()
                 return
         super().keyPressEvent(event)
+
+
+def make_table(headers: list[str], *, file_selection: bool = False) -> QTableWidget:
+    table = FileSelectionTable(0, len(headers)) if file_selection else QTableWidget(0, len(headers))
+    table.setHorizontalHeaderLabels(headers)
+    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().hide()
+    table.verticalHeader().setDefaultSectionSize(46)
+    table.setIconSize(QSize(20, 20))
+    table.setFrameShape(QFrame.Shape.NoFrame)
+    table.setWordWrap(False)
+    table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    table.horizontalHeader().setMinimumSectionSize(70)
+    table.horizontalHeader().setStretchLastSection(True)
+    return table
+
+
+def size_text(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
 
 
 class CategoryDelegate(QStyledItemDelegate):

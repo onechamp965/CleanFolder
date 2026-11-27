@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanfolder.core.categories import CATEGORIES, classify
+from cleanfolder.core.categories import CATEGORIES
 from cleanfolder.core.filesystem import SafetyError, available_name, identity, move_exclusive
 from cleanfolder.core.history import HistoryStore, HistoryWriteError
 from cleanfolder.core.service import Organizer
@@ -35,9 +35,9 @@ class OrganizerTests(unittest.TestCase):
         for category, extensions in CATEGORIES.items():
             for extension in extensions:
                 with self.subTest(extension=extension):
-                    self.assertEqual(classify("FILE" + extension.upper()), category)
-        self.assertEqual(classify("unknown.custom"), "Others")
-        self.assertEqual(classify("no-extension"), "Others")
+                    self.assertEqual(self.organizer.settings.classify("FILE" + extension.upper()), category)
+        self.assertEqual(self.organizer.settings.classify("unknown.custom"), "Others")
+        self.assertEqual(self.organizer.settings.classify("no-extension"), "Others")
 
     def test_selected_subset_creates_only_selected_folders_and_actions(self):
         kept = self.file("keep.pdf", "keep")

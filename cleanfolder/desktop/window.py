@@ -4,12 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QEvent, QSize, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, QTimer, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QFontDatabase, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .. import __version__
@@ -20,52 +20,9 @@ from ..core.service import Organizer, Preview, Result, Scan
 from ..core.settings import Settings, SettingsError
 from ..platforms.environment import trash_location
 from .settings_page import SettingsPage
+from .tasks import Task
 from .theme import category_color, colors, stylesheet
-from .widgets import CategoryDelegate, EmptyState, FileSelectionTable, StatCard, label
-
-
-class Task(QThread):
-    succeeded = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, operation: Callable, parent: QWidget):
-        super().__init__(parent)
-        self.operation = operation
-
-    def run(self):
-        try:
-            self.succeeded.emit(self.operation())
-        except Exception as error:
-            self.failed.emit(str(error))
-
-
-def make_table(headers: list[str], *, file_selection: bool = False) -> QTableWidget:
-    table = FileSelectionTable(0, len(headers)) if file_selection else QTableWidget(0, len(headers))
-    table.setHorizontalHeaderLabels(headers)
-    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setAlternatingRowColors(True)
-    table.setShowGrid(False)
-    table.verticalHeader().hide()
-    table.verticalHeader().setDefaultSectionSize(46)
-    table.setIconSize(QSize(20, 20))
-    table.setFrameShape(QFrame.Shape.NoFrame)
-    table.setWordWrap(False)
-    table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    table.horizontalHeader().setMinimumSectionSize(70)
-    table.horizontalHeader().setStretchLastSection(True)
-    return table
-
-
-def size_text(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1024 or unit == "TB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return ""
+from .widgets import CategoryDelegate, EmptyState, StatCard, label, make_table, size_text
 
 
 class MainWindow(QMainWindow):
@@ -811,7 +768,18 @@ class MainWindow(QMainWindow):
             for card in (self.file_stat, self.size_stat, self.protected_stat):
                 card.value.setText("—")
             self.empty_preview.title.setText("폴더를 확인하지 못했어요")
-            self.empty_preview.detail.setText("접근 권한을 확인하거나 다른 폴더를 선택해 주세요.")
+            permission_error = any(
+                value in task_error.casefold()
+                for value in ("operation not permitted", "permission denied", "eacces")
+            )
+            if sys.platform == "darwin" and permission_error:
+                detail = (
+                    "시스템 설정 > 개인정보 보호 및 보안 > 파일 및 폴더에서 "
+                    "CleanFolder의 해당 폴더 접근을 허용한 뒤 다시 선택해 주세요."
+                )
+            else:
+                detail = "접근 권한을 확인하거나 다른 폴더를 선택해 주세요."
+            self.empty_preview.detail.setText(detail)
             self.empty_preview.action.show()
             self.update_buttons()
             self.summary.setText("작업을 완료하지 못했습니다. 다시 미리보기로 현재 상태를 확인하세요.")

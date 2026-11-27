@@ -1,5 +1,6 @@
 from pathlib import Path
 from importlib.metadata import distribution
+import os
 import re
 import sys
 import sysconfig
@@ -34,6 +35,7 @@ executable = EXE(
     strip=False,
     upx=False,
     argv_emulation=False,
+    codesign_identity=os.environ.get("APPLE_SIGNING_IDENTITY") or None,
 )
 collection = COLLECT(
     executable,
@@ -54,5 +56,6 @@ application = BUNDLE(
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.utilities",
         "LSMinimumSystemVersion": minimum_version,
+        "NSDownloadsFolderUsageDescription": "사용자가 선택한 다운로드 폴더의 파일을 확인하고 정리하기 위해 접근합니다.",
     },
 )

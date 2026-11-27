@@ -13,13 +13,15 @@ python -m scripts.verify_macos
 
 결과는 `dist/macos/`에 저장됩니다. DMG를 기본 다운로드로 제공하고 ZIP은 대체 다운로드로 제공합니다. 두 파일을 모두 받을 필요는 없습니다.
 
+GitHub 배포본은 Developer ID Application 인증서로 서명하고 Apple 공증을 받아야 합니다. 인증서를 키체인에 설치하고 `xcrun notarytool store-credentials`로 공증 프로필을 만든 뒤, 환경 변수 `APPLE_SIGNING_IDENTITY`에 Developer ID 인증서 이름을, `APPLE_NOTARY_PROFILE`에 키체인 프로필 이름을 지정하고 위 빌드 명령을 실행합니다. 공증 프로필이 지정되면 서명하지 않은 빌드를 거부하고 앱 번들과 DMG 공증·티켓 첨부를 진행합니다. 인증서나 공증 프로필이 없는 로컬 빌드는 테스트 용도로만 사용하며 공개 다운로드로 배포하지 않습니다.
+
+앱은 Downloads 폴더 권한 설명을 번들에 포함합니다. 권한 요청이 거부되면 macOS 시스템 설정의 **개인정보 보호 및 보안 → 파일 및 폴더**에서 CleanFolder의 다운로드 접근을 허용해야 합니다.
+
 이전 앱과 용량 비교:
 
 ```bash
 python -m scripts.release macos --baseline dist/CleanFolder.app
 ```
-
-기존 `python scripts/build_macos.py` 명령도 지원합니다.
 
 ## Windows
 
